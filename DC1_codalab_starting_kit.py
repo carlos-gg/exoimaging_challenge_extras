@@ -35,6 +35,8 @@ for i in range(N):
     pa = vip.fits.open_fits('./instrument_angles_' + str(i + 1) + '.fits')
     psf = vip.fits.open_fits('./instrument_psf_' + str(i + 1) + '.fits')
     plsc = vip.fits.open_fits('./instrument_plsc_' + str(i + 1) + '.fits')
+
+    # Let's assume we are using a single FWHM
     fwhm = 4.8
 
     # A simple baseline algorithm. The subtraction of the median frame:
@@ -55,19 +57,22 @@ for i in range(N):
     # Let's write to disk the detection map as a FTIS file
     vip.fits.write_fits('./instrument_detmap_' + str(i + 1) + '.fits', detmap)
 
+    # Let's save the FHWM value
+    vip.fits.write_fits('./instrument_fwhm' + str(i + 1) + '.fits', fwhm)
+
 
 # Let's define our detection threshold and save it
 detection_threshold = 6
 vip.fits.write_fits('./detection_threshold.fits', detection_threshold)
-# Let's save the FHWM value
-vip.fits.write_fits('./fwhm.fits', fwhm)
 
-# Up to this point, we have a list of detection map files:
+# Up to this point, we have a list of detection map files and FWHM value:
 # instrument_detmap_1.fits
 # instrument_detmap_2.fits
-# And two files with the detection threshold and the FWHM used:
+# instrument_fwhm_1.fits
+# instrument_fwhm_2.fits
+# And two files with the detection threshold:
 # detection_threshold.fits
-# fwhm.fits
+
 # Optionally, you could provide the the parameters npix, overlap_threshold, 
 # and max_blob_fact, related to the blob counting procedure. Store them as FITS
 # files (eg. npix.fits). Please check out the notebook DC1_starting_kit.ipynb 
