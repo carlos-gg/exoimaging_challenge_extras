@@ -2,6 +2,7 @@
 
 import numpy as np
 import vip_hci as vip # version 0.9.8
+import os
 
 # The goal of this starting kit is to to illustrate how to create a submission 
 # for phase 1.
@@ -29,41 +30,44 @@ N = 2
 # map, and finally the value of the full width at half maximum used.
 
 # We assume a naming convention: instrument_{cube/pa/psf}_id.fits
+list_instru = ["sphere_irdis","nirc2"]
+data_dir = "../data/public_data/"
+sub_dir = "../submission"
+for instru in list_instru:
+    for i in range(N):
+        cube = vip.fits.open_fits(os.path.join(data_dir,instru+'_cube_' + str(i + 1) + '.fits'))
+        pa = vip.fits.open_fits(os.path.join(data_dir,instru+'_pa_' + str(i + 1) + '.fits'))
+        psf = vip.fits.open_fits(os.path.join(data_dir,instru+'_psf_' + str(i + 1) + '.fits'))
+        plsc = vip.fits.open_fits(os.path.join(data_dir,instru+'_plsc_' + str(i + 1) + '.fits'))
 
-for i in range(N):
-    cube = vip.fits.open_fits('./instrument_cube_' + str(i + 1) + '.fits') 
-    pa = vip.fits.open_fits('./instrument_angles_' + str(i + 1) + '.fits')
-    psf = vip.fits.open_fits('./instrument_psf_' + str(i + 1) + '.fits')
-    plsc = vip.fits.open_fits('./instrument_plsc_' + str(i + 1) + '.fits')
+        # Let's assume we are using a single FWHM
+        fwhm = 4.8
 
-    # Let's assume we are using a single FWHM
-    fwhm = 4.8
+        # A simple baseline algorithm. The subtraction of the median frame:
+        # Building the stack median frame
+        stack_median = np.median(cube, axis=0)
+        # Subtracting the median frame from each slice of the sequence
+        cube_res = cube - stack_median
+        # Rotate each residual slice to align the astrophysical signal
+        cube_res_der = vip.preproc.cube_derotate(cube_res, pa)
+        # Median combining the residuals
+        frame = np.median(cube_res_der, axis=0)
 
-    # A simple baseline algorithm. The subtraction of the median frame:
-    # Building the stack median frame
-    stack_median = np.median(cube, axis=0)
-    # Subtracting the median frame from each slice of the sequence
-    cube_res = cube - stack_median
-    # Rotate each residual slice to align the astrophysical signal
-    cube_res_der = vip.preproc.cube_derotate(cube_res, pa)
-    # Median combining the residuals
-    frame = np.median(cube_res_der, axis=0)
+        detmap = vip.metrics.snrmap(frame, fwhm)
 
-    detmap = vip.metrics.snrmap(frame, fwhm)
+        # Alternatively, you can plug in your algorithm, instead of the baseline + 
+        # S/N map calculation, to produce a detection map.
 
-    # Alternatively, you can plug in your algorithm, instead of the baseline + 
-    # S/N map calculation, to produce a detection map.
+        # Let's write to disk the detection map as a FTIS file
+        vip.fits.write_fits(os.path.join(sub_dir,instru+'_detmap_' + str(i + 1) + '.fits'), detmap)
 
-    # Let's write to disk the detection map as a FTIS file
-    vip.fits.write_fits('./instrument_detmap_' + str(i + 1) + '.fits', detmap)
-
-    # Let's save the FHWM value
-    vip.fits.write_fits('./instrument_fwhm' + str(i + 1) + '.fits', fwhm)
+        # Let's save the FHWM value
+        vip.fits.write_fits(os.path.join(sub_dir,instru+'_fwhm_' + str(i + 1) + '.fits'), np.array([fwhm]))
 
 
 # Let's define our detection threshold and save it
 detection_threshold = 6
-vip.fits.write_fits('./detection_threshold.fits', detection_threshold)
+vip.fits.write_fits(os.path.join(sub_dir,'./detection_threshold.fits'), np.array([detection_threshold]))
 
 # Up to this point, we have a list of detection map files and FWHM value:
 # instrument_detmap_1.fits
