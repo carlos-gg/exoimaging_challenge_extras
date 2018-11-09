@@ -3,6 +3,8 @@
 import numpy as np
 import vip_hci as vip # version 0.9.8
 import os
+from vip_hci.var import fit_2dgaussian
+
 
 # The goal of this starting kit is to to illustrate how to create a submission 
 # for phase 1.
@@ -30,29 +32,46 @@ N = 2
 # map, and finally the value of the full width at half maximum used.
 
 # We assume a naming convention: instrument_{cube/pa/psf}_id.fits
-list_instru = ["sphere_irdis","nirc2"]
-data_dir = "../data/public_data/"
+list_instru = ["sphere_irdis","nirc2","sphere_v471tau"]
+data_dir = "../public_data/"
 sub_dir = "../submission"
+if not os.path.exists(sub_dir):
+        os.makedirs(sub_dir)
 for instru in list_instru:
     for i in range(N):
-        cube = vip.fits.open_fits(os.path.join(data_dir,instru+'_cube_' + str(i + 1) + '.fits'))
+        print(instru)
+        try:
+                cube = vip.fits.open_fits(os.path.join(data_dir,instru+'_cube_' + str(i + 1) + '.fits'))
+        except:
+                continue
         pa = vip.fits.open_fits(os.path.join(data_dir,instru+'_pa_' + str(i + 1) + '.fits'))
         psf = vip.fits.open_fits(os.path.join(data_dir,instru+'_psf_' + str(i + 1) + '.fits'))
         plsc = vip.fits.open_fits(os.path.join(data_dir,instru+'_plsc_' + str(i + 1) + '.fits'))
+        if cube.ndim==4:
+                wavelength= vip.fits.open_fits(os.path.join(data_dir,instru+'_wl_' + str(i + 1) + '.fits'))
 
         # Let's assume we are using a single FWHM
-        fwhm = 4.8
+        #fwhm = 4.8
+        if len(psf.shape) ==3:
+                fwhm = np.mean([fit_2dgaussian(np.mean(psf, axis=0), full_output=True)['fwhm_x'][0],
+                        fit_2dgaussian(np.mean(psf, axis=0), full_output=True)['fwhm_y'][0]])
+        else:
+                fwhm = np.mean([fit_2dgaussian(psf, full_output=True)['fwhm_x'][0],
+                        fit_2dgaussian(psf, full_output=True)['fwhm_y'][0]])
 
-        # A simple baseline algorithm. The subtraction of the median frame:
-        # Building the stack median frame
-        stack_median = np.median(cube, axis=0)
-        # Subtracting the median frame from each slice of the sequence
-        cube_res = cube - stack_median
-        # Rotate each residual slice to align the astrophysical signal
-        cube_res_der = vip.preproc.cube_derotate(cube_res, pa)
-        # Median combining the residuals
-        frame = np.median(cube_res_der, axis=0)
+        if cube.ndim==3:
 
+                # A simple baseline algorithm. The subtraction of the median frame:
+                # Building the stack median frame
+                stack_median = np.median(cube, axis=0)
+                # Subtracting the median frame from each slice of the sequence
+                cube_res = cube - stack_median
+                # Rotate each residual slice to align the astrophysical signal
+                cube_res_der = vip.preproc.cube_derotate(cube_res, pa)
+                # Median combining the residuals
+                frame = np.median(cube_res_der, axis=0)
+        else:
+                vip.medsub.median_sub(cube,pa,wavelength)
         detmap = vip.metrics.snrmap(frame, fwhm)
 
         # Alternatively, you can plug in your algorithm, instead of the baseline + 
@@ -79,6 +98,6 @@ vip.fits.write_fits(os.path.join(sub_dir,'./detection_threshold.fits'), np.array
 
 # Optionally, you could provide the the parameters npix, overlap_threshold, 
 # and max_blob_fact, related to the blob counting procedure. Store them as FITS
-# files (eg. npix.fits). Please check out the notebook DC1_starting_kit.ipynb 
-# for a detailed explanation of this parameters and the effect on the blob 
-# counting procedure. 
+# files (eg. npix.fits). Please check out https://github.com/carlgogo/exoimaging_challenge_extras.git 
+# and in particular the notebook DC1_starting_kit.ipynb for a detailed explanation of this parameters 
+# and the effect on the blob  counting procedure. 
