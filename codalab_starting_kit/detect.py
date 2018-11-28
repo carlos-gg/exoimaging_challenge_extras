@@ -14,8 +14,8 @@ from vip_hci.var import fit_2dgaussian
 # (1d ndarray), the off-axis PSF (2d ndarray) and the pixel scale for VLT/NACO 
 # instrument. 
 
-# Let's assume we have two benchmark datasets witht he same FWHM. 
-N = 2
+# Let's assume we have three benchmark datasets witht the same FWHM. 
+N = 3
 
 # We load the datasets into Numpy ndarrays and process it with a baseline 
 # algorithm to generate a detection map.
@@ -32,16 +32,16 @@ N = 2
 # map, and finally the value of the full width at half maximum used.
 
 # We assume a naming convention: instrument_{cube/pa/psf}_id.fits
-list_instru = ["sphere_irdis","nirc2","sphere_v471tau"]
-data_dir = "../public_data/"
+list_instru = ["sphere_irdis","nirc2"]
+data_dir = "../../data/public_data/"
 sub_dir = "../submission"
 if not os.path.exists(sub_dir):
         os.makedirs(sub_dir)
 for instru in list_instru:
     for i in range(N):
-        print(instru)
         try:
                 cube = vip.fits.open_fits(os.path.join(data_dir,instru+'_cube_' + str(i + 1) + '.fits'))
+                print(instru,"_",i)
         except:
                 continue
         pa = vip.fits.open_fits(os.path.join(data_dir,instru+'_pa_' + str(i + 1) + '.fits'))
@@ -85,7 +85,7 @@ for instru in list_instru:
 
 
 # Let's define our detection threshold and save it
-detection_threshold = 6
+detection_threshold = 4
 vip.fits.write_fits(os.path.join(sub_dir,'./detection_threshold.fits'), np.array([detection_threshold]))
 
 # Up to this point, we have a list of detection map files and FWHM value:
