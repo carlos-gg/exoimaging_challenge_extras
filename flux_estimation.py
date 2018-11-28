@@ -72,24 +72,36 @@ def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
     global GARRWL
     GARRWL = wavelengths
 
+    if cube.ndim == 4:
+        if wavelengths is None:
+            raise ValueError('`wavelengths` parameter must be provided')
+
     # Getting the radial profile in the mean frame of the cube
     sampling_sep = 1
     radius_int = 1
-    me = frame_average_radprofile(np.mean(cube, axis=0), sep=sampling_sep,
+    if cube.ndim == 3:
+        global_frame = np.mean(cube, axis=0)
+    elif cube.ndim == 4:
+        global_frame = np.mean(cube.reshape(-1, cube.shape[2], cube.shape[3]),
+                               axis=0)
+
+    me = frame_average_radprofile(global_frame, sep=sampling_sep,
                                   init_rad=radius_int, plot=False)
     radprof = np.array(me.radprof)
     radprof = radprof[np.array(distances) + 1]
 
     flux_min = radprof * 0.1
-    flux_min[flux_min < 1] = 1  # < 0 instead?
+    flux_min[flux_min < 0] = 0.1
 
     # Multiprocessing pool
     flux_max = pool_map(n_proc, _get_max_flux, fixed(range(len(distances))),
-                        distances, radprof, fwhm, plsc, max_adi_snr)
+                        distances, radprof, fwhm, plsc, max_adi_snr,
+                        wavelengths)
     flux_max = np.array(flux_max)
     fluxes_list, snrs_list = _sample_flux_snr(distances, fwhm, plsc,
                                               n_injections, flux_min,
-                                              flux_max, n_proc, random_seed)
+                                              flux_max, n_proc, random_seed,
+                                              wavelengths)
 
     plotvlines = [min_adi_snr, max_adi_snr]
     nsubplots = len(distances)
@@ -177,7 +189,8 @@ def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
     return flo, fhi
 
 
-def _get_max_flux(i, distances, radprof, fwhm, plsc, max_adi_snr):
+def _get_max_flux(i, distances, radprof, fwhm, plsc, max_adi_snr,
+                  wavelengths=None):
     """
     """
     d = distances[i]
@@ -187,7 +200,8 @@ def _get_max_flux(i, distances, radprof, fwhm, plsc, max_adi_snr):
     counter = 1
 
     while snr < 1.2 * max_adi_snr:
-        f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (flux, d, 0))
+        f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (flux, d, 0),
+                               wavelengths)
         if counter > 2 and snr <= snrs[-1]:
             break
         snrs.append(snr)
@@ -196,7 +210,8 @@ def _get_max_flux(i, distances, radprof, fwhm, plsc, max_adi_snr):
     return flux
 
 
-def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all):
+def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
+                  wavelengths=None):
     """ Get the mean S/N (at 3 equidistant positions) for a given flux and
     distance, on a median subtracted frame.
     """
@@ -210,7 +225,8 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all):
         cube_fc, cx, cy = create_synt_cube(GARRAY, psf, angle_list, plsc,
                                            flux=flux, dist=dist, theta=ang,
                                            verbose=False)
-        fr_temp = median_sub(cube_fc, angle_list, wavelengths, verbose=False)
+        fr_temp = median_sub(cube_fc, angle_list, scale_list=wavelengths,
+                             verbose=False)
         res = frame_quick_report(fr_temp, fwhm, source_xy=(cx, cy),
                                  verbose=False)
         # mean S/N in circular aperture
@@ -222,13 +238,16 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all):
 
 
 def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
-                     nproc=10, random_seed=42):
+                     nproc=10, random_seed=42, wavelengths=None):
     """
     Sensible flux intervals depend on a combination of factors, # of frames,
     range of rotation, correlation, glare intensity.
     """
     starttime = time_ini()
-    frsize = int(GARRAY.shape[1])
+    if GARRAY.ndim == 3:
+        frsize = int(GARRAY.shape[1])
+    elif GARRAY.ndim == 4:
+        frsize = int(GARRAY.shape[2])
     ninj = n_injections
     random_state = np.random.RandomState(random_seed)
     flux_dist_theta_all = list()
@@ -253,7 +272,7 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
 
     # Multiprocessing pool
     res = pool_map(nproc, _get_adi_snrs, GARRPSF, GARRPA, fwhm, plsc,
-                   fixed(flux_dist_theta_all))
+                   fixed(flux_dist_theta_all), wavelengths)
 
     for i in range(len(distances)):
         flux_dist = []
