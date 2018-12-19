@@ -20,21 +20,23 @@ from vip_hci.conf import time_ini, timing, time_fin
 from vip_hci.var import frame_center
 from vip_hci.stats import frame_average_radprofile
 from vip_hci.conf.utils_conf import (pool_map, fixed, make_chunks)
-from vip_hci.var import cube_filter_highpass, pp_subplots, get_annulus_segments
+from vip_hci.var import (cube_filter_highpass, pp_subplots,
+                         get_annulus_segments, prepare_matrix)
 from vip_hci.metrics import cube_inject_companions
 from vip_hci.preproc import (check_pa_vector, cube_derotate, cube_crop_frames,
                              frame_rotate, frame_shift, frame_px_resampling,
-                             frame_crop)
+                             frame_crop, cube_collapse)
 from vip_hci.preproc.derotation import _compute_pa_thresh, _find_indices_adi
 from vip_hci.metrics import frame_quick_report
 from vip_hci.medsub import median_sub
-from vip_hci.pca import pca
+from vip_hci.pca import pca, svd_wrapper
 
 
 def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
-                    n_injections=10, min_adi_snr=2, max_adi_snr=5,
-                    random_seed=42, kernel='rbf', epsilon=0.1, c=1e4,
-                    gamma=1e-2, figsize=(10, 5), dpi=100, n_proc=2, **kwargs):
+                    n_injections=10, mode='median', ncomp=2, min_adi_snr=2,
+                    max_adi_snr=5, random_seed=42, kernel='rbf', epsilon=0.1,
+                    c=1e4, gamma=1e-2, figsize=(10, 5), dpi=100, n_proc=2,
+                    **kwargs):
     """
     Automatic estimation of the scaling factors for injecting the
     companions (brightness or contrast of fake companions).
@@ -101,7 +103,7 @@ def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
     fluxes_list, snrs_list = _sample_flux_snr(distances, fwhm, plsc,
                                               n_injections, flux_min,
                                               flux_max, n_proc, random_seed,
-                                              wavelengths)
+                                              wavelengths, mode, ncomp)
 
     plotvlines = [min_adi_snr, max_adi_snr]
     nsubplots = len(distances)
@@ -210,8 +212,45 @@ def _get_max_flux(i, distances, radprof, fwhm, plsc, max_adi_snr,
     return flux
 
 
+def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
+                            mode='pca', ncomp=2, svd_mode='lapack',
+                            scaling=None, collapse='median', imlib='opencv',
+                            interpolation='lanczos4'):
+    """
+    """
+    if cube.ndim == 3:
+        if mode == 'pca':
+            annulus_width = 3 * fwhm
+            data, ind = prepare_matrix(cube, scaling, mode='annular',
+                                       annulus_radius=radius, verbose=False,
+                                       annulus_width=annulus_width)
+            yy, xx = ind
+            V = svd_wrapper(data, svd_mode, ncomp, False, False)
+            transformed = np.dot(V, data.T)
+            reconstructed = np.dot(transformed.T, V)
+            residuals = data - reconstructed
+            cube_empty = np.zeros_like(cube)
+            cube_empty[:, yy, xx] = residuals
+            cube_res_der = cube_derotate(cube_empty, angle_list, imlib=imlib,
+                                         interpolation=interpolation)
+            res_frame = cube_collapse(cube_res_der, mode=collapse)
+
+        elif mode == 'median':
+            res_frame = median_sub(cube, angle_list, verbose=False)
+
+    elif cube.ndim == 4:
+        if mode == 'pca':
+            pass
+
+        elif mode == 'median':
+            res_frame = median_sub(cube, angle_list, scale_list=wavelengths,
+                                   verbose=False)
+
+    return res_frame
+
+
 def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
-                  wavelengths=None):
+                  wavelengths=None, mode='median', ncomp=2):
     """ Get the mean S/N (at 3 equidistant positions) for a given flux and
     distance, on a median subtracted frame.
     """
@@ -222,12 +261,15 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
 
     # 3 equidistant azimuthal positions
     for ang in [theta, theta + 120, theta + 240]:
-        cube_fc, cx, cy = create_synt_cube(GARRAY, psf, angle_list, plsc,
-                                           flux=flux, dist=dist, theta=ang,
-                                           verbose=False)
-        fr_temp = median_sub(cube_fc, angle_list, scale_list=wavelengths,
-                             verbose=False)
-        res = frame_quick_report(fr_temp, fwhm, source_xy=(cx, cy),
+        cube_fc, posx, posy = create_synt_cube(GARRAY, psf, angle_list, plsc,
+                                               flux=flux, dist=dist, theta=ang,
+                                               verbose=False)
+        fr_temp = _compute_residual_frame(cube_fc, angle_list, dist, fwhm,
+                                          wavelengths, mode, ncomp,
+                                          svd_mode='lapack', scaling=None,
+                                          collapse='median', imlib='opencv',
+                                          interpolation='lanczos4')
+        res = frame_quick_report(fr_temp, fwhm, source_xy=(posx, posy),
                                  verbose=False)
         # mean S/N in circular aperture
         snrs.append(np.mean(res[-1]))
@@ -238,7 +280,8 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
 
 
 def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
-                     nproc=10, random_seed=42, wavelengths=None):
+                     nproc=10, random_seed=42, wavelengths=None, mode='median',
+                     ncomp=2):
     """
     Sensible flux intervals depend on a combination of factors, # of frames,
     range of rotation, correlation, glare intensity.
@@ -272,7 +315,7 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
 
     # Multiprocessing pool
     res = pool_map(nproc, _get_adi_snrs, GARRPSF, GARRPA, fwhm, plsc,
-                   fixed(flux_dist_theta_all), wavelengths)
+                   fixed(flux_dist_theta_all), wavelengths, mode, ncomp)
 
     for i in range(len(distances)):
         flux_dist = []
