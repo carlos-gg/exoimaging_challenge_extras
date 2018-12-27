@@ -25,7 +25,9 @@ from vip_hci.var import (cube_filter_highpass, pp_subplots,
 from vip_hci.metrics import cube_inject_companions
 from vip_hci.preproc import (check_pa_vector, cube_derotate, cube_crop_frames,
                              frame_rotate, frame_shift, frame_px_resampling,
-                             frame_crop, cube_collapse)
+                             frame_crop, cube_collapse, check_pa_vector,
+                             check_scal_vector)
+from vip_hci.preproc import cube_rescaling_wavelengths as scwave
 from vip_hci.preproc.derotation import _compute_pa_thresh, _find_indices_adi
 from vip_hci.metrics import frame_quick_report
 from vip_hci.medsub import median_sub
@@ -218,9 +220,11 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
                             interpolation='lanczos4'):
     """
     """
+    annulus_width = 3 * fwhm
+
     if cube.ndim == 3:
         if mode == 'pca':
-            annulus_width = 3 * fwhm
+            angle_list = check_pa_vector(angle_list)
             data, ind = prepare_matrix(cube, scaling, mode='annular',
                                        annulus_radius=radius, verbose=False,
                                        annulus_width=annulus_width)
@@ -240,7 +244,46 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
 
     elif cube.ndim == 4:
         if mode == 'pca':
-            pass
+            z, n, y_in, x_in = cube.shape
+            angle_list = check_pa_vector(angle_list)
+            scale_list = check_scal_vector(wavelengths)
+            big_cube = []
+
+            # Rescaling the spectral channels to align the speckles
+            for i in range(n):
+                cube_resc = scwave(cube[:, i, :, :], scale_list)[0]
+                cube_resc = cube_crop_frames(cube_resc, size=y_in,
+                                             verbose=False)
+                big_cube.append(cube_resc)
+
+            big_cube = np.array(big_cube)
+
+            print(big_cube.shape)
+
+            big_cube = big_cube.reshape(z * n, y_in, x_in)
+            data, ind = prepare_matrix(big_cube, scaling, mode='annular',
+                                       annulus_radius=radius, verbose=False,
+                                       annulus_width=annulus_width)
+            yy, xx = ind
+            V = svd_wrapper(data, svd_mode, ncomp, False, False)
+            transformed = np.dot(V, data.T)
+            reconstructed = np.dot(transformed.T, V)
+            residuals = data - reconstructed
+            res_cube = np.zeros_like(big_cube)
+            res_cube[:, yy, xx] = residuals
+
+            # res_cube = cube_empty.reshape(z, n, y_in, x_in)
+            resadi_cube = np.zeros((n, y_in, x_in))
+            # Descaling the spectral channels
+            for i in range(n):
+                frame_i = scwave(res_cube[i * z:(i + 1) * z, :, :], scale_list,
+                                 full_output=False, inverse=True,
+                                 y_in=y_in, x_in=x_in, collapse=collapse)
+                resadi_cube[i] = frame_i
+
+            cube_res_der = cube_derotate(resadi_cube, angle_list, imlib=imlib,
+                                         interpolation=interpolation)
+            res_frame = cube_collapse(cube_res_der, mode=collapse)
 
         elif mode == 'median':
             res_frame = median_sub(cube, angle_list, scale_list=wavelengths,
