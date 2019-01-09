@@ -35,8 +35,8 @@ from vip_hci.pca import pca, svd_wrapper
 
 
 def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
-                    n_injections=10, mode='median', ncomp=2, min_adi_snr=2,
-                    max_adi_snr=5, random_seed=42, kernel='rbf', epsilon=0.1,
+                    n_injections=10, mode='median', ncomp=2, min_snr=2,
+                    max_snr=5, random_seed=42, kernel='rbf', epsilon=0.1,
                     c=1e4, gamma=1e-2, figsize=(10, 5), dpi=100, n_proc=2,
                     **kwargs):
     """
@@ -99,15 +99,15 @@ def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
 
     # Multiprocessing pool
     flux_max = pool_map(n_proc, _get_max_flux, fixed(range(len(distances))),
-                        distances, radprof, fwhm, plsc, max_adi_snr,
-                        wavelengths)
+                        distances, radprof, fwhm, plsc, max_snr,
+                        wavelengths, mode, ncomp)
     flux_max = np.array(flux_max)
     fluxes_list, snrs_list = _sample_flux_snr(distances, fwhm, plsc,
                                               n_injections, flux_min,
                                               flux_max, n_proc, random_seed,
                                               wavelengths, mode, ncomp)
 
-    plotvlines = [min_adi_snr, max_adi_snr]
+    plotvlines = [min_snr, max_snr]
     nsubplots = len(distances)
     if nsubplots % 2 != 0:
         nsubplots -= 1
@@ -132,12 +132,12 @@ def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
         model = SVR(kernel=kernel, epsilon=epsilon, C=c, gamma=gamma,
                     **kwargs)
         model.fit(X=snrs, y=fluxes)
-        flux_for_lowsnr = model.predict(min_adi_snr)
-        flux_for_higsnr = model.predict(max_adi_snr)
+        flux_for_lowsnr = model.predict(min_snr)
+        flux_for_higsnr = model.predict(max_snr)
         fhi.append(flux_for_higsnr[0])
         flo.append(flux_for_lowsnr[0])
-        snrminp = min_adi_snr / 2
-        snrs_pred = np.linspace(snrminp, max_adi_snr + snrminp,
+        snrminp = min_snr / 2
+        snrs_pred = np.linspace(snrminp, max_snr + snrminp,
                                 num=50).reshape(-1, 1)
         fluxes_pred = model.predict(snrs_pred)
 
@@ -193,8 +193,8 @@ def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
     return flo, fhi
 
 
-def _get_max_flux(i, distances, radprof, fwhm, plsc, max_adi_snr,
-                  wavelengths=None):
+def _get_max_flux(i, distances, radprof, fwhm, plsc, max_snr,
+                  wavelengths=None, mode='pca', ncomp=2):
     """
     """
     d = distances[i]
@@ -203,9 +203,9 @@ def _get_max_flux(i, distances, radprof, fwhm, plsc, max_adi_snr,
     snrs = []
     counter = 1
 
-    while snr < 1.2 * max_adi_snr:
+    while snr < 1.2 * max_snr:
         f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (flux, d, 0),
-                               wavelengths)
+                               wavelengths, mode, ncomp)
         if counter > 2 and snr <= snrs[-1]:
             break
         snrs.append(snr)
