@@ -35,7 +35,7 @@ from vip_hci.pca import pca, svd_wrapper
 
 
 def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
-                    n_injections=10, mode='median', ncomp=2, min_snr=2,
+                    n_injections=10, mode='median', n_comp=2, min_snr=2,
                     max_snr=5, random_seed=42, kernel='rbf', epsilon=0.1,
                     c=1e4, gamma=1e-2, figsize=(10, 5), dpi=100, n_proc=2,
                     **kwargs):
@@ -98,14 +98,18 @@ def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
     flux_min[flux_min < 0] = 0.1
 
     # Multiprocessing pool
+    print("Estimating the max flux for sampling the S/N vs flux function")
     flux_max = pool_map(n_proc, _get_max_flux, fixed(range(len(distances))),
                         distances, radprof, fwhm, plsc, max_snr,
-                        wavelengths, mode, ncomp)
+                        wavelengths, mode, n_comp)
     flux_max = np.array(flux_max)
+
+    timing(starttime)
+    print("Sampling by injecting fake companions")
     fluxes_list, snrs_list = _sample_flux_snr(distances, fwhm, plsc,
                                               n_injections, flux_min,
                                               flux_max, n_proc, random_seed,
-                                              wavelengths, mode, ncomp)
+                                              wavelengths, mode, n_comp)
 
     plotvlines = [min_snr, max_snr]
     nsubplots = len(distances)
@@ -121,6 +125,8 @@ def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
     fhi = list()
     flo = list()
 
+    timing(starttime)
+    print("Building the regression models for each separation")
     # Regression for each distance
     for i, d in enumerate(distances):
         fluxes = np.array(fluxes_list[i])
@@ -257,10 +263,8 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
                 big_cube.append(cube_resc)
 
             big_cube = np.array(big_cube)
-
-            print(big_cube.shape)
-
             big_cube = big_cube.reshape(z * n, y_in, x_in)
+
             data, ind = prepare_matrix(big_cube, scaling, mode='annular',
                                        annulus_radius=radius, verbose=False,
                                        annulus_width=annulus_width)
@@ -272,9 +276,8 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
             res_cube = np.zeros_like(big_cube)
             res_cube[:, yy, xx] = residuals
 
-            # res_cube = cube_empty.reshape(z, n, y_in, x_in)
-            resadi_cube = np.zeros((n, y_in, x_in))
             # Descaling the spectral channels
+            resadi_cube = np.zeros((n, y_in, x_in))
             for i in range(n):
                 frame_i = scwave(res_cube[i * z:(i + 1) * z, :, :], scale_list,
                                  full_output=False, inverse=True,
@@ -329,7 +332,6 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
     Sensible flux intervals depend on a combination of factors, # of frames,
     range of rotation, correlation, glare intensity.
     """
-    starttime = time_ini()
     if GARRAY.ndim == 3:
         frsize = int(GARRAY.shape[1])
     elif GARRAY.ndim == 4:
@@ -369,7 +371,6 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
         fluxes_list.append(flux_dist)
         snrs_list.append(snr_dist)
 
-    timing(starttime)
     return fluxes_list, snrs_list
 
 
