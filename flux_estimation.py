@@ -134,9 +134,7 @@ def estimate_fluxes(cube, psf, distances, angles, fwhm, plsc, wavelengths=None,
         mask = np.where(snrs > 0.1)
         snrs = snrs[mask].reshape(-1, 1)
         fluxes = fluxes[mask].reshape(-1, 1)
-
-        model = SVR(kernel=kernel, epsilon=epsilon, C=c, gamma=gamma,
-                    **kwargs)
+        model = SVR(kernel=kernel, epsilon=epsilon, C=c, gamma=gamma, **kwargs)
         model.fit(X=snrs, y=fluxes)
         flux_for_lowsnr = model.predict(min_snr)
         flux_for_higsnr = model.predict(max_snr)
@@ -300,16 +298,34 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
     """ Get the mean S/N (at 3 equidistant positions) for a given flux and
     distance, on a median subtracted frame.
     """
-    snrs = []
     theta = flux_dist_theta_all[2]
     flux = flux_dist_theta_all[0]
     dist = flux_dist_theta_all[1]
 
-    # 3 equidistant azimuthal positions
-    for ang in [theta, theta + 120, theta + 240]:
+    if mode == 'median':
+        snrs = []
+        # 3 equidistant azimuthal positions
+        for ang in [theta, theta + 120, theta + 240]:
+            cube_fc, posx, posy = create_synt_cube(GARRAY, psf, angle_list,
+                                                   plsc, flux=flux, dist=dist,
+                                                   theta=ang, verbose=False)
+            fr_temp = _compute_residual_frame(cube_fc, angle_list, dist, fwhm,
+                                              wavelengths, mode, ncomp,
+                                              svd_mode='lapack', scaling=None,
+                                              collapse='median', imlib='opencv',
+                                              interpolation='lanczos4')
+            res = frame_quick_report(fr_temp, fwhm, source_xy=(posx, posy),
+                                     verbose=False)
+            # mean S/N in circular aperture
+            snrs.append(np.mean(res[-1]))
+
+        # median of mean S/N at 3 equidistant positions
+        snr = np.median(snrs)
+
+    elif mode == 'pca':
         cube_fc, posx, posy = create_synt_cube(GARRAY, psf, angle_list, plsc,
-                                               flux=flux, dist=dist, theta=ang,
-                                               verbose=False)
+                                               flux=flux, dist=dist,
+                                               theta=theta, verbose=False)
         fr_temp = _compute_residual_frame(cube_fc, angle_list, dist, fwhm,
                                           wavelengths, mode, ncomp,
                                           svd_mode='lapack', scaling=None,
@@ -318,11 +334,9 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
         res = frame_quick_report(fr_temp, fwhm, source_xy=(posx, posy),
                                  verbose=False)
         # mean S/N in circular aperture
-        snrs.append(np.mean(res[-1]))
+        snr = np.mean(res[-1])
 
-    # median of mean S/N at 3 equidistant positions
-    median_snr = np.median(snrs)
-    return flux, median_snr
+    return flux, snr
 
 
 def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
