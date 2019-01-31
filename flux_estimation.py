@@ -3,7 +3,7 @@
 """
 from __future__ import print_function, division, absolute_import
 
-__all__ = ['EstimateFluxes']
+__all__ = ['FluxEstimator']
 
 import os
 import tables
@@ -33,14 +33,54 @@ from vip_hci.medsub import median_sub
 from vip_hci.pca import pca, svd_wrapper
 
 
-class EstimateFluxes:
+class FluxEstimator:
     """
     Fluxes (proxy of contrast) estimator for injecting fake companions.
     """
     def __init__(self, cube, psf, distances, angles, fwhm, plsc,
-                 wavelengths=None, n_injections=10, algo='median', n_comp=2,
-                 scaling='temp-standard', min_snr=2, max_snr=5, random_seed=42,
+                 wavelengths=None, n_injections=30, algo='pca', n_comp=10,
+                 scaling='temp-standard', min_snr=1, max_snr=3, random_seed=42,
                  n_proc=2):
+        """ Initialization of the flux estimator object.
+
+        Parameters
+        ----------
+        cube : array_like, 3d or 4d
+            Input sequence (ADI or IFS+ADI).
+        psf : array_like, 2d or 3d
+            Input corresponding template PSF.
+        distances : list
+            Distances from the center at which the fluxes will be estimated.
+        angles : array_like, 1d
+            Corresponding vector or parallactic angles.
+        fwhm : int or float
+            FWHM for the input dataset.
+        plsc : float
+            Plate scale for the input dataset.
+        wavelengths : array_like, 1d
+            Wavelengths for the input dataset (in case of a 4d array).
+        n_injections : int, optional
+            Number of fake companion injections for sampling the flux vs SNR
+            dependency.
+        algo : {'pca', 'median'}, str optional
+            Algorithm to be used as a baseline for obtaining SNRs. 'pca' for a
+            principal component analysis based post-processing. 'median' for a
+            median subtraction approach.
+        n_comp : int, optional
+            Number of principal components when ``algo=='pca'``.
+        scaling : str, optional
+            Values scaling used when ``algo=='pca'``.
+        min_snr : int, optional
+            Minimum target SNR for which a flux will be estimated at given
+            distances.
+        max_snr : int, optional
+            Maximum target SNR for which a flux will be estimated at given
+            distances.
+        random_seed : int, optional
+            Random seed.
+        n_proc : int, optional
+            Number of processes to be used. 
+        """
         global GARRAY
         GARRAY = cube
         global GARRPSF
@@ -164,6 +204,11 @@ class EstimateFluxes:
         gamma : float, optional (default=’auto’)
             Kernel coefficient for ‘rbf’, ‘poly’ and ‘sigmoid’. If gamma is
             ‘auto’ then 1/n_features will be used instead.
+        figsize : tuple, optional
+            Size of the figure with the sampled fluxes and SNRs and the computed
+            SVM model.
+        dpi : int, optional
+            DPI of the figures.
         """
         if not self.sampled_fluxes or not self.sampled_snrs:
             self.sampling()
