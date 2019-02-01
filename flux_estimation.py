@@ -13,8 +13,6 @@ from matplotlib import pyplot as plt
 from scipy import interpolate
 from sklearn.linear_model import LinearRegression
 from sklearn.svm import SVR
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.neural_network import MLPRegressor
 from vip_hci.conf import time_ini, timing, time_fin
 from vip_hci.var import frame_center
 from vip_hci.stats import frame_average_radprofile
@@ -38,9 +36,8 @@ class FluxEstimator:
     Fluxes (proxy of contrast) estimator for injecting fake companions.
     """
     def __init__(self, cube, psf, distances, angles, fwhm, plsc,
-                 wavelengths=None, n_injections=30, algo='pca', cevr_thresh=.99,
-                 scaling='temp-standard', min_snr=1, max_snr=3, random_seed=42,
-                 n_proc=2):
+                 wavelengths=None, n_injections=30, algo='pca', min_snr=1,
+                 max_snr=3, random_seed=42, n_proc=2):
         """ Initialization of the flux estimator object.
 
         Parameters
@@ -66,12 +63,6 @@ class FluxEstimator:
             Algorithm to be used as a baseline for obtaining SNRs. 'pca' for a
             principal component analysis based post-processing. 'median' for a
             median subtraction approach.
-        cevr_thresh : float, optional
-            Max cum. explained variance ratio used when ``algo=='pca'``. The
-            max S/N is taken from 3 frames (3 ks) from the principal
-            components range set by ``cevr_thresh``.
-        scaling : str, optional
-            Values scaling used when ``algo=='pca'``.
         min_snr : int, optional
             Minimum target SNR for which a flux will be estimated at given
             distances.
@@ -102,11 +93,10 @@ class FluxEstimator:
         self.angles = angles
         self.fwhm = fwhm
         self.plsc = plsc
-        self.scaling = scaling
+        self.scaling = 'temp-standard'
         self.wavelengths = wavelengths
         self.n_injections = n_injections
         self.algo = algo
-        self.cevr_thresh = cevr_thresh
         self.min_snr = min_snr
         self.max_snr = max_snr
         self.random_seed = random_seed
@@ -143,7 +133,7 @@ class FluxEstimator:
         flux_min = pool_map(self.n_proc, _get_min_flux, fixed(self.n_dist),
                             self.distances, radprof, self.fwhm, self.plsc,
                             self.min_snr, self.wavelengths, self.algo,
-                            self.cevr_thresh, self.scaling)
+                            self.scaling, self.random_seed)
 
         self.min_fluxes = flux_min
         timing(starttime)
@@ -157,7 +147,7 @@ class FluxEstimator:
         flux_max = pool_map(self.n_proc, _get_max_flux, fixed(self.n_dist),
                             self.distances, self.min_fluxes, self.fwhm,
                             self.plsc, self.max_snr, self.wavelengths,
-                            self.algo, self.cevr_thresh, self.scaling)
+                            self.algo, self.scaling, self.random_seed)
 
         self.max_fluxes = flux_max
         timing(starttime)
@@ -178,12 +168,12 @@ class FluxEstimator:
                                self.n_injections, self.min_fluxes,
                                self.max_fluxes, self.n_proc,
                                self.random_seed, self.wavelengths, self.algo,
-                               self.cevr_thresh, self.scaling)
+                               self.scaling)
         self.sampled_fluxes, self.sampled_snrs = res
         timing(starttime)
 
-    def run(self, kernel='rbf', epsilon=0.1, c=1e4, gamma=1e-2, figsize=(10, 2),
-            dpi=100, **kwargs):
+    def run(self, kernel='rbf', epsilon=1e-1, c=1e4, gamma=1e-2,
+            figsize=(10, 2), dpi=100, **kwargs):
         """ Building a regression model with he sampled fluxes and SNRs.
 
         Epsilon-Support Vector Regression (important parameters in the model are
@@ -239,16 +229,18 @@ class FluxEstimator:
             mask = np.where(snrs > 0.1)
             snrs = snrs[mask].reshape(-1, 1)
             fluxes = fluxes[mask].reshape(-1, 1)
+
             model = SVR(kernel=kernel, epsilon=epsilon, C=c, gamma=gamma,
                         **kwargs)
+
             model.fit(X=snrs, y=fluxes)
             flux_for_lowsnr = model.predict(self.min_snr)
             flux_for_higsnr = model.predict(self.max_snr)
             fhi.append(flux_for_higsnr[0])
             flo.append(flux_for_lowsnr[0])
             snrminp = self.min_snr / 2
-            snrs_pred = np.linspace(snrminp, self.max_snr + snrminp,
-                                    num=50).reshape(-1, 1)
+            snrmaxp = self.max_snr * 2
+            snrs_pred = np.linspace(snrminp, snrmaxp, num=50).reshape(-1, 1)
             fluxes_pred = model.predict(snrs_pred)
 
             # Figure of flux vs s/n
@@ -298,49 +290,57 @@ class FluxEstimator:
 
 
 def _get_min_flux(i, distances, radprof, fwhm, plsc, min_snr, wavelengths=None,
-                  mode='pca', cevr_thresh=0.99, scaling='temp-standard'):
+                  mode='pca', scaling='temp-standard', random_seed=42):
     """
     """
     d = distances[i]
     fmin = radprof[i] * 0.1
-    _, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, 0),
-                           wavelengths, mode, cevr_thresh, scaling)
+    random_state = np.random.RandomState(random_seed)
+    theta = random_state.randint(0, 360)
+    n_ks = 1
+
+    _, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, theta),
+                           wavelengths, mode, n_ks, scaling)
 
     while snr > min_snr:
-        f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, 0),
-                               wavelengths, mode, cevr_thresh, scaling)
+        f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, theta),
+                               wavelengths, mode, n_ks, scaling)
         fmin *= 0.5
 
     return fmin
 
 
 def _get_max_flux(i, distances, flux_min, fwhm, plsc, max_snr, wavelengths=None,
-                  mode='pca', cevr_thresh=0.99, scaling='temp-standard'):
+                  mode='pca', scaling='temp-standard', random_seed=42):
     """
     """
     d = distances[i]
     snr = 0.01
-    flux = flux_min[i]
+    flux = flux_min[i] * 2
     snrs = []
     counter = 1
+    random_state = np.random.RandomState(random_seed)
+    theta = random_state.randint(0, 360)
+    n_ks = 1
 
-    while snr < 1.2 * max_snr:
-        f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (flux, d, 0),
-                               wavelengths, mode, cevr_thresh, scaling)
+    while snr < max_snr:
+        f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (flux, d, theta),
+                               wavelengths, mode, n_ks, scaling)
 
         # checking that the snr does not decrease
-        if counter > 2 and snr <= snrs[-1] and snr > 1.2 * max_snr:
+        if snr > max_snr and (counter > 2 and snr <= snrs[-1]):
             break
 
         snrs.append(snr)
-        flux *= 1.5
+        flux *= 1.2
         counter += 1
+
     return flux
 
 
 def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
                      nproc=10, random_seed=42, wavelengths=None, mode='median',
-                     cevr_thresh=0.99, scaling='temp-standard'):
+                     scaling='temp-standard'):
     """
     Sensible flux intervals depend on a combination of factors, # of frames,
     range of rotation, correlation, glare intensity.
@@ -354,6 +354,7 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
     flux_dist_theta_all = list()
     snrs_list = list()
     fluxes_list = list()
+    n_ks = 3
 
     for i, d in enumerate(distances):
         yy, xx = get_annulus_segments((frsize, frsize), d, 1, 1)[0]
@@ -372,8 +373,7 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
             flux_dist_theta_all.append((fluxes_dist[j], dist, theta))
 
     res = pool_map(nproc, _get_adi_snrs, GARRPSF, GARRPA, fwhm, plsc,
-                   fixed(flux_dist_theta_all), wavelengths, mode, cevr_thresh,
-                   scaling)
+                   fixed(flux_dist_theta_all), wavelengths, mode, n_ks, scaling)
 
     for i in range(len(distances)):
         flux_dist = []
@@ -388,7 +388,7 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
 
 
 def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
-                  wavelengths=None, mode='median', cevr_thresh=0.99,
+                  wavelengths=None, mode='median', n_ks=3,
                   scaling='temp-standard'):
     """ Get the mean S/N (at 3 equidistant positions) for a given flux and
     distance, on a median subtracted frame.
@@ -405,10 +405,10 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
                                                    plsc, flux=flux, dist=dist,
                                                    theta=ang, verbose=False)
             fr_temp = _compute_residual_frame(cube_fc, angle_list, dist, fwhm,
-                                              wavelengths, mode, cevr_thresh,
-                                              'lapack', scaling,
+                                              wavelengths, mode, n_ks,
+                                              'randsvd', scaling,
                                               collapse='median', imlib='opencv',
-                                              interpolation='lanczos4')
+                                              interpolation='bilinear')
             res = frame_quick_report(fr_temp, fwhm, source_xy=(posx, posy),
                                      verbose=False)
             # mean S/N in circular aperture
@@ -422,10 +422,10 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
                                                flux=flux, dist=dist,
                                                theta=theta, verbose=False)
         fr_temp = _compute_residual_frame(cube_fc, angle_list, dist, fwhm,
-                                          wavelengths, mode, cevr_thresh,
+                                          wavelengths, mode, n_ks,
                                           svd_mode='randsvd', scaling=scaling,
                                           collapse='median', imlib='opencv',
-                                          interpolation='lanczos4')
+                                          interpolation='bilinear')
         snrs = []
         for i in range(len(fr_temp)):
             res = frame_quick_report(fr_temp[i], fwhm, source_xy=(posx, posy),
@@ -439,32 +439,34 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
 
 
 def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
-                            mode='pca', cevr_thresh=0.99, svd_mode='eigen',
+                            mode='pca', n_ks=3, svd_mode='randsvd',
                             scaling='temp-standard', collapse='median',
                             imlib='opencv', interpolation='bilinear'):
     """
     """
     annulus_width = 2 * fwhm
-    n_ks = 3
 
     if cube.ndim == 3:
         if mode == 'pca':
-            n_frames = cube.shape[0]
             angle_list = check_pa_vector(angle_list)
-            data, ind = prepare_matrix(cube, scaling, mode='annular',
-                                       annulus_radius=radius, verbose=False,
-                                       annulus_width=annulus_width)
-            yy, xx = ind
+            data, pxind = prepare_matrix(cube, scaling, mode='annular',
+                                         annulus_radius=radius, verbose=False,
+                                         annulus_width=annulus_width)
+            yy, xx = pxind
             max_pcs = min(data.shape[0], data.shape[1])
             U, S, V = svd_wrapper(data, svd_mode, max_pcs, False, False, True)
             exp_var = (S ** 2) / (S.shape[0] - 1)
             full_var = np.sum(exp_var)
             explained_variance_ratio = exp_var / full_var
             ratio_cumsum = np.cumsum(explained_variance_ratio)
-            ind = np.searchsorted(ratio_cumsum, cevr_thresh)
-            k_list = list(range(1, n_frames + 1))[:ind + 1]
-            ind_for_nks = np.linspace(0, ind, n_ks, dtype=int).tolist()
-            k_list = np.array(k_list)[ind_for_nks]
+            if n_ks == 1:
+                ind = np.searchsorted(ratio_cumsum, 0.99)
+                k_list = [ind]
+            elif n_ks == 3:
+                k_list = list()
+                k_list.append(min(2, np.searchsorted(ratio_cumsum, 0.90)))
+                k_list.append(np.searchsorted(ratio_cumsum, 0.95))
+                k_list.append(np.searchsorted(ratio_cumsum, 0.99))
 
             res_frame = []
             for k in k_list:
@@ -498,28 +500,42 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
             big_cube = np.array(big_cube)
             big_cube = big_cube.reshape(z * n, y_in, x_in)
 
-            data, ind = prepare_matrix(big_cube, scaling, mode='annular',
-                                       annulus_radius=radius, verbose=False,
-                                       annulus_width=annulus_width)
-            yy, xx = ind
-            V = svd_wrapper(data, svd_mode, ncomp, False, False)
-            transformed = np.dot(V, data.T)
-            reconstructed = np.dot(transformed.T, V)
-            residuals = data - reconstructed
-            res_cube = np.zeros_like(big_cube)
-            res_cube[:, yy, xx] = residuals
+            data, pxind = prepare_matrix(big_cube, scaling, mode='annular',
+                                         annulus_radius=radius, verbose=False,
+                                         annulus_width=annulus_width)
+            yy, xx = pxind
+            max_pcs = min(data.shape[0], data.shape[1])
+            U, S, V = svd_wrapper(data, svd_mode, max_pcs, False, False, True)
+            exp_var = (S ** 2) / (S.shape[0] - 1)
+            full_var = np.sum(exp_var)
+            explained_variance_ratio = exp_var / full_var
+            ratio_cumsum = np.cumsum(explained_variance_ratio)
+            ind = np.searchsorted(ratio_cumsum, cevr_thresh)
+            k_list = list(range(1, max_pcs + 1))[:ind + 1]
+            ind_for_nks = np.linspace(0, ind, n_ks, dtype=int).tolist()
+            k_list = np.array(k_list)[ind_for_nks]
 
-            # Descaling the spectral channels
-            resadi_cube = np.zeros((n, y_in, x_in))
-            for i in range(n):
-                frame_i = scwave(res_cube[i * z:(i + 1) * z, :, :], scale_list,
-                                 full_output=False, inverse=True, y_in=y_in,
-                                 x_in=x_in, collapse=collapse)
-                resadi_cube[i] = frame_i
+            res_frame = []
+            for k in k_list:
+                transformed = np.dot(V[:k], data.T)
+                reconstructed = np.dot(transformed.T, V[:k])
+                residuals = data - reconstructed
+                res_cube = np.zeros_like(big_cube)
+                res_cube[:, yy, xx] = residuals
 
-            cube_res_der = cube_derotate(resadi_cube, angle_list, imlib=imlib,
-                                         interpolation=interpolation)
-            res_frame = cube_collapse(cube_res_der, mode=collapse)
+                # Descaling the spectral channels
+                resadi_cube = np.zeros((n, y_in, x_in))
+                for i in range(n):
+                    frame_i = scwave(res_cube[i * z:(i + 1) * z, :, :],
+                                     scale_list, full_output=False,
+                                     inverse=True, y_in=y_in, x_in=x_in,
+                                     collapse=collapse)
+                    resadi_cube[i] = frame_i
+
+                cube_res_der = cube_derotate(resadi_cube, angle_list,
+                                             imlib=imlib,
+                                             interpolation=interpolation)
+                res_frame.append(cube_collapse(cube_res_der, mode=collapse))
 
         elif mode == 'median':
             res_frame = median_sub(cube, angle_list, scale_list=wavelengths,
