@@ -510,10 +510,14 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
             full_var = np.sum(exp_var)
             explained_variance_ratio = exp_var / full_var
             ratio_cumsum = np.cumsum(explained_variance_ratio)
-            ind = np.searchsorted(ratio_cumsum, cevr_thresh)
-            k_list = list(range(1, max_pcs + 1))[:ind + 1]
-            ind_for_nks = np.linspace(0, ind, n_ks, dtype=int).tolist()
-            k_list = np.array(k_list)[ind_for_nks]
+            if n_ks == 1:
+                ind = np.searchsorted(ratio_cumsum, 0.99)
+                k_list = [ind]
+            elif n_ks == 3:
+                k_list = list()
+                k_list.append(min(2, np.searchsorted(ratio_cumsum, 0.90)))
+                k_list.append(np.searchsorted(ratio_cumsum, 0.95))
+                k_list.append(np.searchsorted(ratio_cumsum, 0.99))
 
             res_frame = []
             for k in k_list:
