@@ -75,12 +75,12 @@ class FluxEstimator:
             Number of processes to be used.
         """
         global GARRAY
-        GARRAY = cube
         global GARRPSF
-        GARRPSF = psf
-        global GARRPA
-        GARRPA = angles
         global GARRWL
+        global GARRPA
+        GARRAY = cube
+        GARRPSF = psf
+        GARRPA = angles
         GARRWL = wavelengths
         self.min_fluxes = None
         self.max_fluxes = None
@@ -141,6 +141,9 @@ class FluxEstimator:
     def get_max_flux(self):
         """ Obtaining the high end of the interval for sampling the SNRs.
         """
+        if self.min_fluxes is None:
+            self.get_min_flux()
+
         starttime = time_ini()
 
         print("Estimating the max values for sampling the S/N vs flux function")
@@ -210,25 +213,43 @@ class FluxEstimator:
         plotvlines = [self.min_snr, self.max_snr]
         nsubplots = len(self.distances)
         ncols = min(4, nsubplots)
-        if nsubplots % 2 != 0:
+        if nsubplots != 1 and nsubplots % 2 != 0:
             nsubplots -= 1
-        nrows = int(nsubplots / ncols) + 1
 
-        fig, axs = plt.subplots(nrows, ncols, figsize=figsize, dpi=dpi,
-                                sharey='row')
+        if nsubplots < 3:
+            if nsubplots == 2:
+                figsizex = figsize[0] * 0.66
+            elif nsubplots == 1:
+                figsizex = figsize[0] * 0.33
+            nrows = 1
+        else:
+            figsizex = figsize[0]
+            nrows = int(nsubplots / ncols) + 1
+
+        fig, axs = plt.subplots(nrows, ncols, figsize=(figsizex, figsize[1]),
+                                dpi=dpi, sharey='row')
         fig.subplots_adjust(wspace=0.05, hspace=0.3)
-        axs = axs.ravel()
+        if isinstance(axs, np.ndarray):
+            axs = axs.ravel()
         fhi = list()
         flo = list()
 
         print("Building the regression models for each separation")
         # Regression for each distance
         for i, d in enumerate(self.distances):
+            if isinstance(axs, np.ndarray):
+                axis = axs[i]
+            else:
+                axis = axs
+
             fluxes = np.array(self.sampled_fluxes[i])
             snrs = np.array(self.sampled_snrs[i])
             mask = np.where(snrs > 0.1)
             snrs = snrs[mask].reshape(-1, 1)
             fluxes = fluxes[mask].reshape(-1, 1)
+
+            # DEBUG
+            # print(fluxes, snrs)
 
             model = SVR(kernel=kernel, epsilon=epsilon, C=c, gamma=gamma,
                         **kwargs)
@@ -244,25 +265,24 @@ class FluxEstimator:
             fluxes_pred = model.predict(snrs_pred)
 
             # Figure of flux vs s/n
-            axs[i].xaxis.set_tick_params(labelsize=6)
-            axs[i].yaxis.set_tick_params(labelsize=6)
-            axs[i].plot(fluxes, snrs, '.', alpha=0.2, markersize=4)
-            axs[i].plot(fluxes_pred, snrs_pred, '-', alpha=0.99,
-                        label='S/N regression model', color='orangered')
-            axs[i].grid(which='major', alpha=0.3)
-            axs[i].legend(fontsize=6)
+            axis.xaxis.set_tick_params(labelsize=6)
+            axis.yaxis.set_tick_params(labelsize=6)
+            axis.plot(fluxes, snrs, '.', alpha=0.2, markersize=4)
+            axis.plot(fluxes_pred, snrs_pred, '-', alpha=0.99,
+                      label='S/N regression model', color='orangered')
+            axis.grid(which='major', alpha=0.3)
+            axis.legend(fontsize=6)
             for l in plotvlines:
-                axs[i].plot((0, max(fluxes)), (l, l), ':', color='darksalmon')
+                axis.plot((0, max(fluxes)), (l, l), ':', color='darksalmon')
             ax0 = fig.add_subplot(111, frame_on=False)
             ax0.set_xticks([])
             ax0.set_yticks([])
-            ax0.set_xlabel('Fakecomp flux scaling [Counts]', labelpad=25,
-                           size=8)
-            ax0.set_ylabel('Signal to noise ratio',
-                           labelpad=25, size=8)
+            ax0.set_xlabel('Fakecomp flux scaling', labelpad=25, size=8)
+            ax0.set_ylabel('Signal to noise ratio', labelpad=25, size=8)
 
-        for i in range(len(self.distances), len(axs)):
-            axs[i].axis('off')
+        if isinstance(axs, np.ndarray):
+            for i in range(len(self.distances), len(axs)):
+                axis.axis('off')
 
         flo = np.array(flo).flatten()
         fhi = np.array(fhi).flatten()
@@ -297,7 +317,7 @@ def _get_min_flux(i, distances, radprof, fwhm, plsc, min_snr, wavelengths=None,
     fmin = radprof[i] * 0.1
     random_state = np.random.RandomState(random_seed)
     theta = random_state.randint(0, 360)
-    n_ks = 1
+    n_ks = 3
 
     _, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, theta),
                            wavelengths, mode, n_ks, scaling)
@@ -306,6 +326,9 @@ def _get_min_flux(i, distances, radprof, fwhm, plsc, min_snr, wavelengths=None,
         f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, theta),
                                wavelengths, mode, n_ks, scaling)
         fmin *= 0.5
+
+    # DEBUG
+    # print(fmin, snr)
 
     return fmin
 
@@ -321,7 +344,7 @@ def _get_max_flux(i, distances, flux_min, fwhm, plsc, max_snr, wavelengths=None,
     counter = 1
     random_state = np.random.RandomState(random_seed)
     theta = random_state.randint(0, 360)
-    n_ks = 1
+    n_ks = 3
 
     while snr < max_snr:
         f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (flux, d, theta),
@@ -334,6 +357,9 @@ def _get_max_flux(i, distances, flux_min, fwhm, plsc, max_snr, wavelengths=None,
         snrs.append(snr)
         flux *= 1.2
         counter += 1
+
+        # DEBUG
+        # print(flux, snr)
 
     return flux
 
@@ -418,22 +444,37 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
         snr = np.median(snrs)
 
     elif mode == 'pca':
-        cube_fc, posx, posy = create_synt_cube(GARRAY, psf, angle_list, plsc,
-                                               flux=flux, dist=dist,
-                                               theta=theta, verbose=False)
-        fr_temp = _compute_residual_frame(cube_fc, angle_list, dist, fwhm,
-                                          wavelengths, mode, n_ks,
-                                          svd_mode='randsvd', scaling=scaling,
-                                          collapse='median', imlib='opencv',
-                                          interpolation='bilinear')
         snrs = []
-        for i in range(len(fr_temp)):
-            res = frame_quick_report(fr_temp[i], fwhm, source_xy=(posx, posy),
-                                     verbose=False)
-            # mean S/N in circular aperture
-            snrs.append(np.mean(res[-1]))
+        # 3 equidistant azimuthal positions
+        for ang in [theta, theta + 120, theta + 240]:
+            cube_fc, posx, posy = create_synt_cube(GARRAY, psf, angle_list,
+                                                   plsc, flux=flux, dist=dist,
+                                                   theta=ang, verbose=False)
+            fr_temp = _compute_residual_frame(cube_fc, angle_list, dist, fwhm,
+                                              wavelengths, mode, n_ks,
+                                              svd_mode='randsvd',
+                                              scaling=scaling,
+                                              collapse='median', imlib='opencv',
+                                              interpolation='bilinear')
+            snrs_ks = []
+            for i in range(len(fr_temp)):
+                res = frame_quick_report(fr_temp[i], fwhm/2, source_xy=(posx,
+                                                                        posy),
+                                         verbose=False)
+                snrs_ks.append(np.median(res[-1]))
 
-        snr = max(snrs)
+            maxsnr_ks = max(snrs_ks)
+            if np.isinf(maxsnr_ks) or np.isnan(maxsnr_ks) or maxsnr_ks < 0:
+                maxsnr_ks = 0.01
+
+            snrs.append(maxsnr_ks)
+
+            # DEBUG
+            # print(flux, snr)
+            # pp_subplots(np.array(fr_temp))
+
+        # median of mean S/N at 3 equidistant positions
+        snr = np.median(snrs)
 
     return flux, snr
 
@@ -444,7 +485,7 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
                             imlib='opencv', interpolation='bilinear'):
     """
     """
-    annulus_width = 2 * fwhm
+    annulus_width = 3 * fwhm
 
     if cube.ndim == 3:
         if mode == 'pca':
@@ -460,11 +501,11 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
             explained_variance_ratio = exp_var / full_var
             ratio_cumsum = np.cumsum(explained_variance_ratio)
             if n_ks == 1:
-                ind = np.searchsorted(ratio_cumsum, 0.99)
+                ind = np.searchsorted(ratio_cumsum, 0.95)
                 k_list = [ind]
             elif n_ks == 3:
                 k_list = list()
-                k_list.append(min(2, np.searchsorted(ratio_cumsum, 0.90)))
+                k_list.append(max(2, np.searchsorted(ratio_cumsum, 0.90)))
                 k_list.append(np.searchsorted(ratio_cumsum, 0.95))
                 k_list.append(np.searchsorted(ratio_cumsum, 0.99))
 
@@ -511,13 +552,16 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
             explained_variance_ratio = exp_var / full_var
             ratio_cumsum = np.cumsum(explained_variance_ratio)
             if n_ks == 1:
-                ind = np.searchsorted(ratio_cumsum, 0.99)
+                ind = np.searchsorted(ratio_cumsum, 0.95)
                 k_list = [ind]
             elif n_ks == 3:
                 k_list = list()
-                k_list.append(min(2, np.searchsorted(ratio_cumsum, 0.90)))
-                k_list.append(np.searchsorted(ratio_cumsum, 0.95))
+                k_list.append(max(2, np.searchsorted(ratio_cumsum, 0.95)))
+                k_list.append(np.searchsorted(ratio_cumsum, 0.97))
                 k_list.append(np.searchsorted(ratio_cumsum, 0.99))
+
+            # DEBUG
+            # print(k_list)
 
             res_frame = []
             for k in k_list:
