@@ -76,7 +76,7 @@ class FluxEstimator:
             distances.
         interpolate : {False, True}, bool optional
             Whether to inter/extrapolate the estimated fluxes for higher
-            sampling.
+            sampling. Only valid when ``len(distances) > 2``.
         interp_dist : array_like 1d or list
             New distances for inter/extrapolate the estimated fluxes.
         random_seed : int, optional
@@ -296,7 +296,7 @@ class FluxEstimator:
         flo = np.array(flo).flatten()
         fhi = np.array(fhi).flatten()
 
-        if interpolate and len(self.distances) > 1:
+        if interpolate and len(self.distances) > 2:
             x = self.distances
             f1 = interpolate.interp1d(x, flo, fill_value='extrapolate')
             f2 = interpolate.interp1d(x, fhi, fill_value='extrapolate')
