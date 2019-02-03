@@ -30,6 +30,10 @@ from vip_hci.metrics import frame_quick_report
 from vip_hci.medsub import median_sub
 from vip_hci.pca import pca, svd_wrapper
 
+import warnings
+# To silence UserWarning when scaling data with sklearn
+warnings.filterwarnings("ignore")
+
 
 class FluxEstimator:
     """
@@ -246,17 +250,14 @@ class FluxEstimator:
             snrs = np.array(self.sampled_snrs[i])
             mask = np.where(snrs > 0.1)
             snrs = snrs[mask].reshape(-1, 1)
-            fluxes = fluxes[mask].reshape(-1, 1)
-
-            # DEBUG
-            # print(fluxes, snrs)
-
+            fluxes = fluxes[mask].reshape(-1, 1).ravel()
             model = SVR(kernel=kernel, epsilon=epsilon, C=c, gamma=gamma,
                         **kwargs)
-
             model.fit(X=snrs, y=fluxes)
-            flux_for_lowsnr = model.predict(self.min_snr)
-            flux_for_higsnr = model.predict(self.max_snr)
+            misnr = np.array(self.min_snr).reshape(1, -1)
+            masnr = np.array(self.max_snr).reshape(1, -1)
+            flux_for_lowsnr = model.predict(misnr)
+            flux_for_higsnr = model.predict(masnr)
             fhi.append(flux_for_higsnr[0])
             flo.append(flux_for_lowsnr[0])
             snrminp = self.min_snr / 2
