@@ -41,8 +41,8 @@ class FluxEstimator:
     """
     def __init__(self, cube, psf, distances, angles, fwhm, plsc,
                  wavelengths=None, n_injections=30, algo='pca', min_snr=1,
-                 max_snr=3, interpolate=False, interp_dist=None, random_seed=42,
-                 n_proc=2):
+                 max_snr=3, inter_extrap=False, inter_extrap_dist=None,
+                 random_seed=42, n_proc=2):
         """ Initialization of the flux estimator object.
 
         Parameters
@@ -74,10 +74,10 @@ class FluxEstimator:
         max_snr : int, optional
             Maximum target SNR for which a flux will be estimated at given
             distances.
-        interpolate : {False, True}, bool optional
+        inter_extrap : {False, True}, bool optional
             Whether to inter/extrapolate the estimated fluxes for higher
             sampling. Only valid when ``len(distances) > 2``.
-        interp_dist : array_like 1d or list
+        inter_extrap_dist : array_like 1d or list
             New distances for inter/extrapolate the estimated fluxes.
         random_seed : int, optional
             Random seed.
@@ -111,9 +111,11 @@ class FluxEstimator:
         self.max_snr = max_snr
         self.random_seed = random_seed
         self.n_proc = n_proc
-        self.interpolate = interpolate
-        self.interp_dist = interp_dist
+        self.inter_extrap = inter_extrap
+        self.inter_extrap_dist = inter_extrap_dist
         self.n_dist = range(len(self.distances))
+        self.fluxes_list = list()
+        self.snrs_list = list()
 
         if cube.ndim == 4:
             if wavelengths is None:
@@ -225,7 +227,8 @@ class FluxEstimator:
         plotvlines = [self.min_snr, self.max_snr]
         nsubplots = len(self.distances)
         ncols = min(4, nsubplots)
-        if nsubplots != 1 and nsubplots % 2 != 0:
+
+        if nsubplots > 1 and nsubplots % 2 != 0:
             nsubplots -= 1
 
         if nsubplots < 3:
@@ -259,6 +262,9 @@ class FluxEstimator:
             mask = np.where(snrs > 0.1)
             snrs = snrs[mask].reshape(-1, 1)
             fluxes = fluxes[mask].reshape(-1, 1).ravel()
+            self.fluxes_list.append(fluxes)
+            self.snrs_list.append(snrs)
+
             model = SVR(kernel=kernel, epsilon=epsilon, C=c, gamma=gamma,
                         **kwargs)
             model.fit(X=snrs, y=fluxes)
@@ -283,26 +289,26 @@ class FluxEstimator:
             axis.legend(fontsize=6)
             for l in plotvlines:
                 axis.plot((0, max(fluxes)), (l, l), ':', color='darksalmon')
-            ax0 = fig.add_subplot(111, frame_on=False)
-            ax0.set_xticks([])
-            ax0.set_yticks([])
-            ax0.set_xlabel('Fakecomp flux scaling', labelpad=25, size=8)
-            ax0.set_ylabel('Signal to noise ratio', labelpad=25, size=8)
+            axis = fig.add_subplot(111, frame_on=False)
+            axis.set_xticks([])
+            axis.set_yticks([])
+            axis.set_xlabel('Fakecomp flux scaling', labelpad=25, size=8)
+            axis.set_ylabel('Signal to noise ratio', labelpad=25, size=8)
 
         if isinstance(axs, np.ndarray):
             for i in range(len(self.distances), len(axs)):
-                axis.axis('off')
+                axs[i].axis('off')
 
         flo = np.array(flo).flatten()
         fhi = np.array(fhi).flatten()
 
-        if interpolate and len(self.distances) > 2:
+        if self.inter_extrap and len(self.distances) > 2:
             x = self.distances
             f1 = interpolate.interp1d(x, flo, fill_value='extrapolate')
             f2 = interpolate.interp1d(x, fhi, fill_value='extrapolate')
-            fhi = f2(self.interp_dist)
-            flo = f1(self.interp_dist)
-            plot_x = self.interp_dist
+            fhi = f2(self.inter_extrap_dist)
+            flo = f1(self.inter_extrap_dist)
+            plot_x = self.inter_extrap_dist
         else:
             plot_x = self.distances
 
