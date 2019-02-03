@@ -41,7 +41,8 @@ class FluxEstimator:
     """
     def __init__(self, cube, psf, distances, angles, fwhm, plsc,
                  wavelengths=None, n_injections=30, algo='pca', min_snr=1,
-                 max_snr=3, random_seed=42, n_proc=2):
+                 max_snr=3, interpolate=False, interp_dist=None, random_seed=42,
+                 n_proc=2):
         """ Initialization of the flux estimator object.
 
         Parameters
@@ -73,6 +74,11 @@ class FluxEstimator:
         max_snr : int, optional
             Maximum target SNR for which a flux will be estimated at given
             distances.
+        interpolate : {False, True}, bool optional
+            Whether to inter/extrapolate the estimated fluxes for higher
+            sampling.
+        interp_dist : array_like 1d or list
+            New distances for inter/extrapolate the estimated fluxes.
         random_seed : int, optional
             Random seed.
         n_proc : int, optional
@@ -105,6 +111,8 @@ class FluxEstimator:
         self.max_snr = max_snr
         self.random_seed = random_seed
         self.n_proc = n_proc
+        self.interpolate = interpolate
+        self.interp_dist = interp_dist
         self.n_dist = range(len(self.distances))
 
         if cube.ndim == 4:
@@ -287,17 +295,28 @@ class FluxEstimator:
 
         flo = np.array(flo).flatten()
         fhi = np.array(fhi).flatten()
+
+        if interpolate and len(self.distances) > 1:
+            x = self.distances
+            f1 = interpolate.interp1d(x, flo, fill_value='extrapolate')
+            f2 = interpolate.interp1d(x, fhi, fill_value='extrapolate')
+            fhi = f2(self.interp_dist)
+            flo = f1(self.interp_dist)
+            plot_x = self.interp_dist
+        else:
+            plot_x = self.distances
+
         self.estimated_fluxes_high = fhi
         self.estimated_fluxes_low = flo
 
         plt.figure(figsize=(10, 4), dpi=dpi)
         plt.plot(self.distances, self.radprof, '--', alpha=0.8, color='gray',
                  lw=2, label='average radial profile')
-        plt.plot(self.distances, flo, '.-', alpha=0.6, lw=2, color='dodgerblue',
+        plt.plot(plot_x, flo, '.-', alpha=0.6, lw=2, color='dodgerblue',
                  label='flux lower interval')
-        plt.plot(self.distances, fhi, '.-', alpha=0.6, color='dodgerblue', lw=2,
+        plt.plot(plot_x, fhi, '.-', alpha=0.6, color='dodgerblue', lw=2,
                  label='flux upper interval')
-        plt.fill_between(self.distances, flo, fhi, where=flo <= fhi, alpha=0.2,
+        plt.fill_between(plot_x, flo, fhi, where=flo <= fhi, alpha=0.2,
                          facecolor='dodgerblue', interpolate=True)
         plt.grid(which='major', alpha=0.4)
         plt.xlabel('Distance from the center [Pixels]')
@@ -319,17 +338,17 @@ def _get_min_flux(i, distances, radprof, fwhm, plsc, min_snr, wavelengths=None,
     random_state = np.random.RandomState(random_seed)
     theta = random_state.randint(0, 360)
     n_ks = 3
-
     _, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, theta),
                            wavelengths, mode, n_ks, scaling)
 
     while snr > min_snr:
+        theta = random_state.randint(0, 360)
         f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, theta),
                                wavelengths, mode, n_ks, scaling)
         fmin *= 0.5
 
-    # DEBUG
-    # print(fmin, snr)
+        # DEBUG
+        # print(fmin, snr)
 
     return fmin
 
@@ -348,6 +367,7 @@ def _get_max_flux(i, distances, flux_min, fwhm, plsc, max_snr, wavelengths=None,
     n_ks = 3
 
     while snr < max_snr:
+        theta = random_state.randint(0, 360)
         f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (flux, d, theta),
                                wavelengths, mode, n_ks, scaling)
 
