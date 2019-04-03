@@ -1,3 +1,2 @@
 numpy 
-vip_hci>=0.9.8
-photutils==0.4.0
+vip_hci>=0.9.9
