@@ -1,2 +1,4 @@
 .ipynb_checkpoints
 .idea/encodings.xml
+*.iml
+.idea/markdown-navigator/profiles_settings.xml
