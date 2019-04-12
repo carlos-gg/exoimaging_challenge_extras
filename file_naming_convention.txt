@@ -1,10 +1,12 @@
 instruments = ["nirc2", "lmircam", "gpi", "sphere_irdis", "sphere_ifs"]
 
-The files composing an ADI (3d) dataset will be named as follows (where id is an integer value):
+The files composing an ADI ("nirc2", "lmircam", "sphere_irdis") dataset will be
+named as follows (where id is an integer value):
 instrument_cube_id.fits (3d array)
 instrument_pa_id.fits (1d array)
 instrument_psf_id.fits (2d array)
 instrument_pxscale_id.fits (float value, arc/px)
 
-Optionally, in the case of spectrally dispersed data, we will have an additional file: 
-instrument_wvs_id.fits (1d array)
+Optionally, in the case of spectrally dispersed data ("gpi", "sphere_ifs"), or
+the ADI+mSDI sub-challenge, we will have an additional file:
+instrument_wls_id.fits (1d array)

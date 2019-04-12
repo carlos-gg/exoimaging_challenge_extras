@@ -12,9 +12,8 @@ from scipy.interpolate import interp1d
 from vip_hci.conf import time_ini, timing, time_fin
 from vip_hci.var import frame_center
 from vip_hci.stats import frame_average_radprofile
-from vip_hci.conf.utils_conf import (pool_map, fixed, make_chunks)
-from vip_hci.var import (cube_filter_highpass, pp_subplots,
-                         get_annulus_segments, prepare_matrix)
+from vip_hci.conf.utils_conf import pool_map, iterable
+from vip_hci.var import get_annulus_segments, prepare_matrix
 from vip_hci.metrics import cube_inject_companions
 from vip_hci.preproc import (check_pa_vector, cube_derotate, cube_crop_frames,
                              frame_rotate, frame_shift, frame_px_resampling,
@@ -23,7 +22,7 @@ from vip_hci.preproc import (check_pa_vector, cube_derotate, cube_crop_frames,
 from vip_hci.preproc import cube_rescaling_wavelengths as scwave
 from vip_hci.metrics import frame_quick_report
 from vip_hci.medsub import median_sub
-from vip_hci.pca import pca, svd_wrapper
+from vip_hci.pca import pca, SVDecomposer
 
 import warnings
 # To silence UserWarning when scaling data with sklearn
@@ -139,7 +138,7 @@ class FluxEstimator:
         self.radprof = radprof
 
         print("Estimating the min values for sampling the S/N vs flux function")
-        flux_min = pool_map(self.n_proc, _get_min_flux, fixed(self.n_dist),
+        flux_min = pool_map(self.n_proc, _get_min_flux, iterable(self.n_dist),
                             self.distances, radprof, self.fwhm, self.plsc,
                             self.min_snr, self.wavelengths, self.algo,
                             self.scaling, self.random_seed)
@@ -156,7 +155,7 @@ class FluxEstimator:
         starttime = time_ini()
 
         print("Estimating the max values for sampling the S/N vs flux function")
-        flux_max = pool_map(self.n_proc, _get_max_flux, fixed(self.n_dist),
+        flux_max = pool_map(self.n_proc, _get_max_flux, iterable(self.n_dist),
                             self.distances, self.min_fluxes, self.fwhm,
                             self.plsc, self.max_snr, self.wavelengths,
                             self.algo, self.scaling, self.random_seed)
@@ -390,7 +389,8 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
 
     # multiprocessing (pool) for each distance
     res = pool_map(nproc, _get_adi_snrs, GARRPSF, GARRPA, fwhm, plsc,
-                   fixed(flux_dist_theta_all), wavelengths, mode, n_ks, scaling)
+                   iterable(flux_dist_theta_all), wavelengths, mode, n_ks,
+                   scaling)
 
     for i in range(len(distances)):
         flux_dist = []
@@ -478,36 +478,34 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
     """
     """
     annulus_width = 3 * fwhm
+    inrad = radius - int(annulus_width / 2.)
+    outrad = radius + int(annulus_width / 2.)
 
     if cube.ndim == 3:
         if mode == 'pca':
             angle_list = check_pa_vector(angle_list)
-            data, pxind = prepare_matrix(cube, scaling, mode='annular',
-                                         annulus_radius=radius, verbose=False,
-                                         annulus_width=annulus_width)
-            yy, xx = pxind
-            max_pcs = min(data.shape[0], data.shape[1])
-            U, S, V = svd_wrapper(data, svd_mode, max_pcs, False, False, True)
-            exp_var = (S ** 2) / (S.shape[0] - 1)
-            full_var = np.sum(exp_var)
-            explained_variance_ratio = exp_var / full_var
-            ratio_cumsum = np.cumsum(explained_variance_ratio)
+            svdecomp = SVDecomposer(cube, mode='annular', inrad=inrad,
+                                    outrad=outrad, svd_mode=svd_mode,
+                                    scaling=scaling, wavelengths=None,
+                                    verbose=False)
+            _ = svdecomp.get_cevr()
+
             if n_ks == 1:
-                ind = max(2, np.searchsorted(ratio_cumsum, 0.85))
+                ind = max(2, svdecomp.cevr_to_ncomp(0.85))
                 k_list = [ind]
             elif n_ks == 3:
                 k_list = list()
-                k_list.append(max(2, np.searchsorted(ratio_cumsum, 0.90)))
-                k_list.append(np.searchsorted(ratio_cumsum, 0.95))
-                k_list.append(np.searchsorted(ratio_cumsum, 0.99))
+                k_list.append(max(2, svdecomp.cevr_to_ncomp(0.90)))
+                k_list.append(svdecomp.cevr_to_ncomp(0.95))
+                k_list.append(svdecomp.cevr_to_ncomp(0.99))
 
             res_frame = []
             for k in k_list:
-                transformed = np.dot(V[:k], data.T)
-                reconstructed = np.dot(transformed.T, V[:k])
-                residuals = data - reconstructed
+                transformed = np.dot(svdecomp.v[:k], svdecomp.matrix.T)
+                reconstructed = np.dot(transformed.T, svdecomp.v[:k])
+                residuals = svdecomp.matrix - reconstructed
                 cube_empty = np.zeros_like(cube)
-                cube_empty[:, yy, xx] = residuals
+                cube_empty[:, svdecomp.yy, svdecomp.xx] = residuals
                 cube_res_der = cube_derotate(cube_empty, angle_list,
                                              imlib=imlib,
                                              interpolation=interpolation)
@@ -521,44 +519,27 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
             z, n, y_in, x_in = cube.shape
             angle_list = check_pa_vector(angle_list)
             scale_list = check_scal_vector(wavelengths)
-            big_cube = []
-
-            # Rescaling the spectral channels to align the speckles
-            for i in range(n):
-                cube_resc = scwave(cube[:, i, :, :], scale_list)[0]
-                cube_resc = cube_crop_frames(cube_resc, size=y_in,
-                                             verbose=False)
-                big_cube.append(cube_resc)
-
-            big_cube = np.array(big_cube)
-            big_cube = big_cube.reshape(z * n, y_in, x_in)
-
-            data, pxind = prepare_matrix(big_cube, scaling, mode='annular',
-                                         annulus_radius=radius, verbose=False,
-                                         annulus_width=annulus_width)
-            yy, xx = pxind
-            max_pcs = min(data.shape[0], data.shape[1])
-            U, S, V = svd_wrapper(data, svd_mode, max_pcs, False, False, True)
-            exp_var = (S ** 2) / (S.shape[0] - 1)
-            full_var = np.sum(exp_var)
-            explained_variance_ratio = exp_var / full_var
-            ratio_cumsum = np.cumsum(explained_variance_ratio)
+            svdecomp = SVDecomposer(cube, mode='annular', inrad=inrad,
+                                    outrad=outrad, svd_mode=svd_mode,
+                                    scaling=scaling, wavelengths=wavelengths,
+                                    verbose=False)
+            _ = svdecomp.get_cevr()
             if n_ks == 1:
-                ind = max(2, np.searchsorted(ratio_cumsum, 0.95))
+                ind = max(2, svdecomp.cevr_to_ncomp(0.95))
                 k_list = [ind]
             elif n_ks == 3:
                 k_list = list()
-                k_list.append(max(2, np.searchsorted(ratio_cumsum, 0.95)))
-                k_list.append(np.searchsorted(ratio_cumsum, 0.97))
-                k_list.append(np.searchsorted(ratio_cumsum, 0.99))
+                k_list.append(max(2, svdecomp.cevr_to_ncomp(0.95)))
+                k_list.append(svdecomp.cevr_to_ncomp(0.97))
+                k_list.append(svdecomp.cevr_to_ncomp(0.99))
 
             res_frame = []
             for k in k_list:
-                transformed = np.dot(V[:k], data.T)
-                reconstructed = np.dot(transformed.T, V[:k])
-                residuals = data - reconstructed
-                res_cube = np.zeros_like(big_cube)
-                res_cube[:, yy, xx] = residuals
+                transformed = np.dot(svdecomp.v[:k], svdecomp.matrix.T)
+                reconstructed = np.dot(transformed.T, svdecomp.v[:k])
+                residuals = svdecomp.matrix - reconstructed
+                res_cube = np.zeros(svdecomp.cube4d_shape)
+                res_cube[:, svdecomp.yy, svdecomp.xx] = residuals
 
                 # Descaling the spectral channels
                 resadi_cube = np.zeros((n, y_in, x_in))
