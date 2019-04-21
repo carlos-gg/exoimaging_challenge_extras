@@ -453,8 +453,8 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
 
 
 def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
-                  wavelengths=None, mode='median', n_ks=3,
-                  scaling='temp-standard', debug=False):
+                  wavelengths=None, mode='pca', n_ks=3, scaling='temp-standard',
+                  debug=False):
     """ Get the mean S/N (at 3 equidistant positions) for a given flux and
     distance, on a residual frame.
     """
@@ -474,6 +474,9 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
                                           wavelengths, mode, n_ks, 'randsvd',
                                           scaling, 'median', 'opencv',
                                           'bilinear')
+        # handling the case of mode='median'
+        if isinstance(fr_temp, np.ndarray):
+            fr_temp = [fr_temp]
         snrs_ks = []
         for i in range(len(fr_temp)):
             res = snr_ss(fr_temp[i], source_xy=(posx, posy), fwhm=fwhm,
