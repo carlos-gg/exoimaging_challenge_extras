@@ -21,7 +21,7 @@ from vip_hci.preproc import (check_pa_vector, cube_derotate, cube_crop_frames,
                              frame_crop, cube_collapse, check_pa_vector,
                              check_scal_vector)
 from vip_hci.preproc import cube_rescaling_wavelengths as scwave
-from vip_hci.metrics import snr_ss
+from vip_hci.metrics import snr
 from vip_hci.medsub import median_sub
 from vip_hci.pca import pca, SVDecomposer
 
@@ -479,8 +479,8 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
             fr_temp = [fr_temp]
         snrs_ks = []
         for i in range(len(fr_temp)):
-            res = snr_ss(fr_temp[i], source_xy=(posx, posy), fwhm=fwhm,
-                         exclude_negative_lobes=True)
+            res = snr(fr_temp[i], source_xy=(posx, posy), fwhm=fwhm,
+                      exclude_negative_lobes=True)
             snrs_ks.append(res)
 
         maxsnr_ks = max(snrs_ks)
@@ -498,9 +498,9 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
                            circle_radius=(5, dist), label=label, dpi=60)
 
     # max of mean S/N at 3 equidistant positions
-    snr = np.max(snrs)
+    snr_value = np.max(snrs)
 
-    return flux, snr
+    return flux, snr_value
 
 
 def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
