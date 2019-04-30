@@ -127,6 +127,7 @@ class FluxEstimator:
                                  'high wrt the frame size. Values must be '
                                  'smaller than {:.2f}'.format(maxd))
 
+        self.starttime = time_ini()
         self.min_fluxes = None
         self.max_fluxes = None
         self.radprof = None
@@ -138,7 +139,10 @@ class FluxEstimator:
         self.angles = angles
         self.fwhm = fwhm
         self.plsc = plsc
-        self.scaling = 'temp-standard'
+        if cube.ndim == 4:
+            self.scaling = 'temp-standard'
+        elif cube.ndim == 3:
+            self.scaling = None
         self.wavelengths = wavelengths
         self.spectrum = spectrum
         self.n_injections = n_injections
@@ -157,7 +161,6 @@ class FluxEstimator:
         """ Obtaining the low end of the interval for sampling the S/N. Based
         on the initial estimation of the radial profile of the mean frame.
         """
-        starttime = time_ini()
         # Getting the radial profile in the mean frame of the cube
         sampling_sep = 1
         radius_int = 1
@@ -183,15 +186,13 @@ class FluxEstimator:
                             self.random_seed)
 
         self.min_fluxes = flux_min
-        timing(starttime)
+        timing(self.starttime)
 
     def get_max_flux(self, debug=False):
         """ Obtaining the high end of the interval for sampling the S/N.
         """
         if self.min_fluxes is None:
             self.get_min_flux()
-
-        starttime = time_ini(verbose=False)
 
         print("Estimating the upper flux interval for sampling the S/N vs flux "
               "function")
@@ -202,7 +203,7 @@ class FluxEstimator:
                             self.random_seed, debug)
 
         self.max_fluxes = flux_max
-        timing(starttime)
+        timing(self.starttime)
 
     def sampling(self):
         """ Using the computed interval of fluxes for sampling the flux vs SNR
@@ -214,7 +215,6 @@ class FluxEstimator:
         if not self.max_fluxes:
             self.get_max_flux()
 
-        starttime = time_ini(verbose=False)
         print("Sampling by injecting fake companions")
         res = _sample_flux_snr(self.distances, self.fwhm, self.plsc,
                                self.n_injections, self.min_fluxes,
@@ -222,7 +222,7 @@ class FluxEstimator:
                                self.wavelengths, self.spectrum, self.algo,
                                self.scaling)
         self.sampled_fluxes, self.sampled_snrs = res
-        timing(starttime)
+        timing(self.starttime)
 
     def run(self, dpi=100):
         """ Obtaining the flux vs S/N relationship.
@@ -233,7 +233,6 @@ class FluxEstimator:
         if not self.sampled_fluxes or not self.sampled_snrs:
             self.sampling()
 
-        starttime = time_ini(verbose=False)
         nsubplots = len(self.distances)
         ncols = min(4, nsubplots)
 
@@ -324,7 +323,8 @@ class FluxEstimator:
         self.estimated_fluxes_low = flo
 
         # figure with fluxes as a function of the separation
-        if len(self.distances) > 1:
+        if len(self.distances) > 1 and isinstance(self.min_snr, (float, int)) \
+                and isinstance(self.max_snr, (float, int)):
             plt.figure(figsize=(10, 4), dpi=dpi)
             plt.plot(self.distances, self.radprof, '--', alpha=0.8,
                      color='gray', lw=2, label='average radial profile')
@@ -343,7 +343,7 @@ class FluxEstimator:
             plt.legend()
             plt.show()
 
-        timing(starttime)
+        timing(self.starttime)
 
 
 def _get_min_flux(i, distances, radprof, fwhm, plsc, min_snr, wavelengths=None,
@@ -472,9 +472,12 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
     flux = flux_dist_theta_all[0]
     dist = flux_dist_theta_all[1]
 
-    # grey spectrum (same flux in all wls)
-    if spectrum is None:
-        spectrum = np.ones((GARRAY.shape[0]))
+    if GARRAY.ndim == 3:
+        spectrum = 1
+    elif GARRAY.ndim == 4:
+        # grey spectrum (same flux in all wls)
+        if spectrum is None:
+            spectrum = np.ones((GARRAY.shape[0]))
 
     snrs = []
     # 3 equidistant azimuthal positions, 1 or several K values
@@ -525,7 +528,7 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
     """
     """
     if cube.ndim == 3:
-        annulus_width = 3 * fwhm
+        annulus_width = 4 * fwhm
         inrad = radius - int(np.round(annulus_width / 2.))
         outrad = radius + int(np.round(annulus_width / 2.))
 
@@ -544,6 +547,9 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
                 k_list.append(svdecomp.cevr_to_ncomp(0.90))
                 k_list.append(svdecomp.cevr_to_ncomp(0.95))
                 k_list.append(svdecomp.cevr_to_ncomp(0.99))
+
+            if debug:
+                print(k_list)
 
             res_frame = []
             for k in k_list:
