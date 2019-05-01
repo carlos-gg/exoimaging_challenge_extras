@@ -540,13 +540,11 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
                                     verbose=False)
             _ = svdecomp.get_cevr(plot=False)
 
-            if n_ks == 1:
-                k_list = [svdecomp.cevr_to_ncomp(0.90)]
-            elif n_ks == 3:
-                k_list = list()
-                k_list.append(svdecomp.cevr_to_ncomp(0.90))
-                k_list.append(svdecomp.cevr_to_ncomp(0.95))
-                k_list.append(svdecomp.cevr_to_ncomp(0.99))
+            # n_ks == 1 or n_ks == 3
+            k_list = [max(1, svdecomp.cevr_to_ncomp(0.90))]
+            if n_ks == 3:
+                k_list.append(max(2, svdecomp.cevr_to_ncomp(0.95)))
+                k_list.append(max(3, svdecomp.cevr_to_ncomp(0.99)))
 
             if debug:
                 print(k_list)
@@ -579,13 +577,12 @@ def _compute_residual_frame(cube, angle_list, radius, fwhm, wavelengths=None,
                                     scaling=scaling, wavelengths=scale_list,
                                     verbose=False)
             _ = svdecomp.get_cevr(plot=False)
-            if n_ks == 1:
-                k_list = [svdecomp.cevr_to_ncomp(0.90)]
-            elif n_ks == 3:
-                k_list = list()
-                k_list.append(svdecomp.cevr_to_ncomp(0.90))
-                k_list.append(svdecomp.cevr_to_ncomp(0.95))
-                k_list.append(svdecomp.cevr_to_ncomp(0.99))
+
+            # n_ks == 1 or n_ks == 3
+            k_list = [max(1, svdecomp.cevr_to_ncomp(0.90))]
+            if n_ks == 3:
+                k_list.append(max(2, svdecomp.cevr_to_ncomp(0.95)))
+                k_list.append(max(3, svdecomp.cevr_to_ncomp(0.99)))
 
             if debug:
                 print(k_list)
