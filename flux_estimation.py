@@ -305,6 +305,7 @@ class FluxEstimator:
         if isinstance(axs, np.ndarray):
             for i in range(len(self.distances), len(axs)):
                 axs[i].axis('off')
+        plt.show()
 
         flo = np.array(flo).flatten()
         fhi = np.array(fhi).flatten()
