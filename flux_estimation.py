@@ -76,7 +76,7 @@ class FluxEstimator:
     """
     def __init__(self, cube, psf, distances, angles, fwhm, plsc,
                  wavelengths=None, spectrum=None, n_injections=30, algo='pca',
-                 min_snr=1, max_snr=3, inter_extrap=False,
+                 min_snr=1, max_snr=3, inter_extrap=False, svd_mode='randsvd',
                  inter_extrap_dist=None, random_seed=42, n_proc=2):
         """ Initialization of the flux estimator object.
         """
@@ -147,6 +147,7 @@ class FluxEstimator:
         self.spectrum = spectrum
         self.n_injections = n_injections
         self.algo = algo
+        self.svd_mode = svd_mode
         self.min_snr = min_snr
         self.max_snr = max_snr
         self.random_seed = random_seed
@@ -157,7 +158,7 @@ class FluxEstimator:
         self.fluxes_list = list()
         self.snrs_list = list()
 
-    def get_min_flux(self):
+    def get_min_flux(self, debug=False):
         """ Obtaining the low end of the interval for sampling the S/N. Based
         on the initial estimation of the radial profile of the mean frame.
         """
@@ -183,7 +184,7 @@ class FluxEstimator:
                             self.distances, radprof, self.fwhm, self.plsc,
                             iterable(self.min_snr), self.wavelengths,
                             self.spectrum, self.algo, self.scaling,
-                            self.random_seed)
+                            self.svd_mode, self.random_seed, debug)
 
         self.min_fluxes = flux_min
         timing(self.starttime)
@@ -200,7 +201,7 @@ class FluxEstimator:
                             self.distances, self.min_fluxes, self.fwhm,
                             self.plsc, iterable(self.max_snr), self.wavelengths,
                             self.spectrum, self.algo, self.scaling,
-                            self.random_seed, debug)
+                            self.svd_mode, self.random_seed, debug)
 
         self.max_fluxes = flux_max
         timing(self.starttime)
@@ -349,21 +350,23 @@ class FluxEstimator:
 
 def _get_min_flux(i, distances, radprof, fwhm, plsc, min_snr, wavelengths=None,
                   spectrum=None, mode='pca', scaling='temp-standard',
-                  random_seed=42):
+                  svd_mode='randsvd', random_seed=42, debug=False):
     """
     """
     d = distances[i]
     fmin = radprof[i] * 0.1
     random_state = np.random.RandomState(random_seed)
-    n_ks = 3
+    n_ks = 1
     theta_init = random_state.randint(0, 360)
     _, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, theta_init),
-                           wavelengths, spectrum, mode, n_ks, scaling)
+                           wavelengths, spectrum, mode, n_ks, scaling, svd_mode,
+                           debug)
 
     while snr > min_snr:
         theta = random_state.randint(0, 360)
         f, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (fmin, d, theta),
-                               wavelengths, spectrum, mode, n_ks, scaling)
+                               wavelengths, spectrum, mode, n_ks, scaling,
+                               svd_mode, debug)
         fmin *= 0.5
 
     return fmin
@@ -371,7 +374,7 @@ def _get_min_flux(i, distances, radprof, fwhm, plsc, min_snr, wavelengths=None,
 
 def _get_max_flux(i, distances, flux_min, fwhm, plsc, max_snr, wavelengths=None,
                   spectrum=None, mode='pca', scaling='temp-standard',
-                  random_seed=42, debug=False):
+                  svd_mode='randsvd', random_seed=42, debug=False):
     """
     """
     d = distances[i]
@@ -382,13 +385,13 @@ def _get_max_flux(i, distances, flux_min, fwhm, plsc, max_snr, wavelengths=None,
     counter = 0
     counter_decrease = 0
     random_state = np.random.RandomState(random_seed)
-    n_ks = 3
+    n_ks = 1
 
     while snr < max_snr:
         theta = random_state.randint(0, 360)
         _, snr = _get_adi_snrs(GARRPSF, GARRPA, fwhm, plsc, (flux, d, theta),
                                wavelengths, spectrum, mode, n_ks, scaling,
-                               debug)
+                               svd_mode, debug)
 
         # making sure the snr increases
         if counter > 3:
@@ -414,7 +417,8 @@ def _get_max_flux(i, distances, flux_min, fwhm, plsc, max_snr, wavelengths=None,
 
 def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
                      nproc=10, random_seed=42, wavelengths=None, spectrum=None,
-                     mode='median', scaling='temp-standard'):
+                     mode='median', scaling='temp-standard',
+                     svd_mode='randsvd'):
     """
     Sensible flux intervals depend on a combination of factors, # of frames,
     range of rotation, correlation, glare intensity.
@@ -449,7 +453,7 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
     # multiprocessing (pool) for each distance
     res = pool_map(nproc, _get_adi_snrs, GARRPSF, GARRPA, fwhm, plsc,
                    iterable(flux_dist_theta_all), wavelengths, spectrum, mode,
-                   n_ks, scaling)
+                   n_ks, scaling, svd_mode)
 
     for i in range(len(distances)):
         flux_dist = []
@@ -465,7 +469,7 @@ def _sample_flux_snr(distances, fwhm, plsc, n_injections, flux_min, flux_max,
 
 def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
                   wavelengths=None, spectrum=None, mode='pca', n_ks=3,
-                  scaling='temp-standard', debug=False):
+                  scaling='temp-standard', svd_mode='randsvd', debug=False):
     """ Get the mean S/N (at 3 equidistant positions) for a given flux and
     distance, on a residual frame.
     """
@@ -489,7 +493,7 @@ def _get_adi_snrs(psf, angle_list, fwhm, plsc, flux_dist_theta_all,
                                               verbose=False, full_output=True)
         posy, posx = pos[0]
         fr_temp = _compute_residual_frame(cube_fc, angle_list, dist, fwhm,
-                                          wavelengths, mode, n_ks, 'randsvd',
+                                          wavelengths, mode, n_ks, svd_mode,
                                           scaling, 'median', 'opencv',
                                           'bilinear')
         # handling the case of mode='median'
