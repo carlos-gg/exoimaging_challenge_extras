@@ -4,6 +4,7 @@ import os.path
 import numpy as np
 import vip_hci as vip
 import hciplot as hp
+from vip_hci.fits import open_fits
 from vip_hci.metrics import compute_binary_map
 
 
@@ -13,11 +14,11 @@ def process_detmaps(list_instruments, list_nb_datasets, input_dir, output_dir,
     Processes the detection maps for a given list of instruments and
     number of DSs per instrument. Writes to a txt file the computed
     metrics.
-    
+
     ADI
     list_instruments = ["sphere_irdis", "nirc2", "lmircam"]
     list_nb_datasets = [3, 3, 3]
-    
+
     ADI + mSDI
     list_instruments = ["gpi", "sphere_ifs"]
     list_nb_datasets = [5, 5]
@@ -35,9 +36,8 @@ def process_detmaps(list_instruments, list_nb_datasets, input_dir, output_dir,
         output_filename = os.path.join(output_dir, 'scores.txt')
         output_file = open(output_filename, 'w')
 
-        threshold = vip.fits.open_fits(os.path.join(submit_dir,
-                                                    "detection_threshold"),
-                                       verbose=False)
+        threshold = open_fits(os.path.join(submit_dir, "detection_threshold"),
+                              verbose=False)
         print("Global detection threshold: {}".format(threshold))
 
         # optional files
@@ -46,18 +46,16 @@ def process_detmaps(list_instruments, list_nb_datasets, input_dir, output_dir,
         max_blob_fact_file = os.path.join(submit_dir, "max_blob_fact")
 
         if os.path.exists(npix_file):
-            npix = vip.fits.open_fits(npix_file, verbose=False)
+            npix = open_fits(npix_file, verbose=False)
         else:
             npix = 2
 
         if os.path.exists(overlap_threshold_file):
-            overlap_thr = vip.fits.open_fits(overlap_threshold_file,
-                                             verbose=False)
+            overlap_thr = open_fits(overlap_threshold_file, verbose=False)
         else:
             overlap_thr = 0.7
         if os.path.exists(max_blob_fact_file):
-            max_blob_fact = vip.fits.open_fits(max_blob_fact_file, 
-                                               verbose=False)
+            max_blob_fact = open_fits(max_blob_fact_file, verbose=False)
         else:
             max_blob_fact = 2
 
@@ -67,27 +65,37 @@ def process_detmaps(list_instruments, list_nb_datasets, input_dir, output_dir,
 
         for instru, nb_ds in zip(list_instruments, list_nb_datasets):
             for i in range(nb_ds):
+                # this is a list/tuple of (x,y) positions
                 truth_file = os.path.join(truth_dir,
-                                          instru+"_positions_"+str(i+1))
+                                          instru + "_positions_" + str(i + 1))
                 submission_file = os.path.join(submit_dir,
-                                               instru+"_detmap_"+str(i+1))
-                detection_map = vip.fits.open_fits(submission_file,
-                                                   verbose=False)
-                if debug:
-                    hp.plot_frames(detection_map)
-                fwhm_file = os.path.join(submit_dir, instru+"_fwhm_"+str(i+1))
+                                               instru + "_detmap_" + str(i + 1))
+                detection_map = open_fits(submission_file, verbose=False)
 
                 if not os.path.exists(submission_file + ".fits"):
                     errmsg = "Detection map ({}) is missing"
                     raise ValueError(errmsg.format(submission_file + ".fits"))
 
                 # truth_file e.g. np.array([(26.86, 22.42), (62,63)])
-                injections = vip.fits.open_fits(truth_file, verbose=False)
-                print("Instrument: {}, id: {}".format(instru, i+1))
+                injections = open_fits(truth_file, verbose=False)
+                print("Instrument: {}, id: {}".format(instru, i + 1))
                 if len(injections) != 0:
                     print("Injections: ", injections)
-                    injections = tuple((inj[1], inj[0]) for inj in injections)
-                    fwhm = float(vip.fits.open_fits(fwhm_file, verbose=False))
+
+                    if debug:
+                        hp.plot_frames(detection_map, title='Detection map')
+
+                    injections = tuple((inj[0], inj[1]) for inj in injections)
+
+                    fwhm_file = os.path.join(submit_dir, instru + "_fwhm_" +
+                                             str(i + 1))
+                    if os.path.exists(fwhm_file + ".fits"):
+                        fwhm = float(open_fits(fwhm_file, verbose=False))
+                    else:
+                        fwhm_file = os.path.join(truth_dir, instru + "_fwhm_" +
+                                                 str(i + 1))
+                        fwhm = float(open_fits(fwhm_file, verbose=False))
+
                     res = compute_binary_map(detection_map,
                                              thresholds=[threshold],
                                              injections=injections,
@@ -109,7 +117,7 @@ def process_detmaps(list_instruments, list_nb_datasets, input_dir, output_dir,
         if n_fps_tot + n_det_tot != 0:
             prec = n_det_tot / (n_fps_tot + n_det_tot)
             FDR = n_fps_tot / (n_fps_tot + n_det_tot)
-            f1 = 2*prec*recall / (prec+recall)
+            f1 = 2 * prec * recall / (prec + recall)
         else:
             prec = 0
             FDR = 0
