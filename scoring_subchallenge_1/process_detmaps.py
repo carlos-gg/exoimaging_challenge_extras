@@ -125,20 +125,18 @@ def process_detmaps(list_instruments, list_nb_datasets, input_dir, output_dir,
 
         # This file is read by Codalab to create the scoreboards
         # Key (in Codalab) is one of the following:
-        # {'FalsePositives_xx', 'FDR_xx', 'Precision_xx', 'F1_xx', 'Recall_xx'}
+        # {'FalsePositives_xx', 'Precision_xx', 'F1_xx', 'Recall_xx'}
         if subchallenge == '3d':
-            output_file.write("FalsePositives_3d: %f \n" % n_fps_tot)
-            output_file.write("FDR_3d: %f \n" % FDR)
-            output_file.write("Precision_3d: %f \n" % prec)
             output_file.write("F1_3d: %f \n" % f1)
+            output_file.write("Precision_3d: %f \n" % prec)
             output_file.write("Recall_3d: %f \n" % recall)
+            output_file.write("FalsePositives_3d: %f \n" % n_fps_tot)
             output_file.close()
         elif subchallenge == '4d':
-            output_file.write("FalsePositives_4d: %f \n" % n_fps_tot)
-            output_file.write("FDR_4d: %f \n" % FDR)
-            output_file.write("Precision_4d: %f \n" % prec)
             output_file.write("F1_4d: %f \n" % f1)
+            output_file.write("Precision_4d: %f \n" % prec)
             output_file.write("Recall_4d: %f \n" % recall)
+            output_file.write("FalsePositives_4d: %f \n" % n_fps_tot)
             output_file.close()
         else:
             raise ValueError("`subchallenge` must be 3d or 4d")
