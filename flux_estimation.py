@@ -1,6 +1,3 @@
-"""
-
-"""
 from __future__ import print_function, division, absolute_import
 
 __all__ = ['FluxEstimator']
@@ -23,7 +20,7 @@ from vip_hci.preproc import (check_pa_vector, cube_derotate, cube_crop_frames,
 from vip_hci.preproc import cube_rescaling_wavelengths as scwave
 from vip_hci.metrics import snr
 from vip_hci.medsub import median_sub
-from vip_hci.pca import pca, SVDecomposer
+from vip_hci.pca import SVDecomposer
 
 import warnings
 # To silence UserWarning when scaling data with sklearn
